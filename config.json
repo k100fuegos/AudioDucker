@@ -3,15 +3,18 @@
   "target_apps": {
     "spotify.exe": {
       "enabled": true
+    },
+    "chrome.exe": {
+      "enabled": true
     }
   },
   "trigger_apps": {
     "discord.exe": {
       "enabled": true,
-      "duck_volume": 0.25
+      "duck_volume": 0.3
     },
     "chrome.exe": {
-      "enabled": true,
+      "enabled": false,
       "duck_volume": 0.35
     }
   },

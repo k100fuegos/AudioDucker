@@ -97,11 +97,12 @@ class AudioDuckerGUI(ctk.CTk):
         self.on_restart_service_callback = on_restart_service_callback
         self.detector = AudioDetector()
         self.config_data = self.load_config()
+        self.trigger_live_widgets = {}
 
         # Configuración de ventana
         self.title("AudioDucker v2.01 - Control de Volumen Inteligente")
-        self.geometry("940x680")
-        self.minsize(880, 600)
+        self.geometry("960x720")
+        self.minsize(880, 620)
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
@@ -175,14 +176,14 @@ class AudioDuckerGUI(ctk.CTk):
                 "vlc.exe": {"enabled": False}
             },
             "trigger_apps": {
-                "discord.exe": {"enabled": True, "duck_volume": 0.25},
-                "chrome.exe": {"enabled": True, "duck_volume": 0.35},
-                "msedge.exe": {"enabled": True, "duck_volume": 0.35},
-                "firefox.exe": {"enabled": True, "duck_volume": 0.35},
-                "brave.exe": {"enabled": True, "duck_volume": 0.35},
-                "telegram.exe": {"enabled": True, "duck_volume": 0.25},
-                "zoom.exe": {"enabled": True, "duck_volume": 0.15},
-                "obs64.exe": {"enabled": True, "duck_volume": 0.30}
+                "discord.exe": {"enabled": True, "duck_volume": 0.25, "trigger_threshold": 0.05},
+                "chrome.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+                "msedge.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+                "firefox.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+                "brave.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+                "telegram.exe": {"enabled": True, "duck_volume": 0.25, "trigger_threshold": 0.05},
+                "zoom.exe": {"enabled": True, "duck_volume": 0.15, "trigger_threshold": 0.05},
+                "obs64.exe": {"enabled": True, "duck_volume": 0.30, "trigger_threshold": 0.05}
             },
             "duck_on_microphone": False,
             "selected_microphone": "Default",
@@ -221,12 +222,14 @@ class AudioDuckerGUI(ctk.CTk):
                             if isinstance(app_v, dict):
                                 clean_triggers[app_k_clean] = {
                                     "enabled": bool(app_v.get("enabled", True)),
-                                    "duck_volume": float(app_v.get("duck_volume", 0.25))
+                                    "duck_volume": float(app_v.get("duck_volume", 0.25)),
+                                    "trigger_threshold": float(app_v.get("trigger_threshold", 0.05))
                                 }
                             else:
                                 clean_triggers[app_k_clean] = {
                                     "enabled": True,
-                                    "duck_volume": float(app_v)
+                                    "duck_volume": float(app_v),
+                                    "trigger_threshold": 0.05
                                 }
                         data["trigger_apps"] = clean_triggers
 
@@ -461,7 +464,7 @@ class AudioDuckerGUI(ctk.CTk):
         else:
             if "trigger_apps" not in self.config_data:
                 self.config_data["trigger_apps"] = {}
-            self.config_data["trigger_apps"][proc_clean] = {"enabled": True, "duck_volume": 0.30}
+            self.config_data["trigger_apps"][proc_clean] = {"enabled": True, "duck_volume": 0.30, "trigger_threshold": 0.05}
             self.save_config(show_msg=False)
             self._refresh_triggers_list()
             messagebox.showinfo("Proceso Agregado", f"Se agregó '{proc_clean}' como App Activadora.")
@@ -595,6 +598,13 @@ class AudioDuckerGUI(ctk.CTk):
         )
         btn_add.pack(side="right")
 
+        ctk.CTkLabel(
+            self.triggers_view,
+            text="💡 Configura el nivel de bajada y el umbral mínimo de intensidad para activar la atenuación.",
+            font=("Segoe UI", 11, "italic"),
+            text_color="#B0BEC5"
+        ).pack(anchor="w", pady=(0, 10))
+
         self.triggers_scroll = ctk.CTkScrollableFrame(self.triggers_view)
         self.triggers_scroll.pack(fill="both", expand=True)
         self._refresh_triggers_list()
@@ -603,67 +613,128 @@ class AudioDuckerGUI(ctk.CTk):
         for w in self.triggers_scroll.winfo_children():
             w.destroy()
 
+        self.trigger_live_widgets = {}
+
         triggers = self.config_data.get("trigger_apps", {})
         if not triggers:
             ctk.CTkLabel(self.triggers_scroll, text="No hay aplicaciones activadoras configuradas.").pack(pady=20)
             return
 
         for app_name, app_info in list(triggers.items()):
-            row = ctk.CTkFrame(self.triggers_scroll)
-            row.pack(fill="x", pady=5, padx=5)
+            card = ctk.CTkFrame(self.triggers_scroll)
+            card.pack(fill="x", pady=6, padx=5)
 
             is_enabled = app_info.get("enabled", True) if isinstance(app_info, dict) else True
             duck_vol = app_info.get("duck_volume", 0.25) if isinstance(app_info, dict) else float(app_info)
+            trig_thresh = app_info.get("trigger_threshold", 0.05) if isinstance(app_info, dict) else 0.05
+            
             duck_pct = int(duck_vol * 100)
+            thresh_pct = int(trig_thresh * 100)
+
+            # Fila Superior: Switch + Nombre de App + Botón Eliminar
+            top_row = ctk.CTkFrame(card, fg_color="transparent")
+            top_row.pack(fill="x", padx=10, pady=(8, 4))
 
             sw_var = ctk.BooleanVar(value=is_enabled)
             sw = ctk.CTkSwitch(
-                row,
+                top_row,
                 text=f"📱 {app_name}",
                 variable=sw_var,
-                font=("Segoe UI", 12, "bold"),
-                width=150,
+                font=("Segoe UI", 13, "bold"),
                 command=lambda name=app_name, var=sw_var: self._toggle_trigger_enabled(name, var.get())
             )
-            sw.pack(side="left", padx=10, pady=10)
+            sw.pack(side="left")
 
             btn_del = ctk.CTkButton(
-                row,
-                text="❌",
-                width=35,
+                top_row,
+                text="❌ Eliminar",
+                width=80,
                 fg_color="#D32F2F",
                 hover_color="#B71C1C",
                 command=lambda name=app_name: self._delete_trigger_app(name)
             )
-            btn_del.pack(side="right", padx=8)
+            btn_del.pack(side="right")
 
-            btn_add = ctk.CTkButton(row, text="+", width=28, command=lambda name=app_name: self._step_trigger_vol(name, 5))
-            btn_add.pack(side="right", padx=2)
+            # Fila de Medidor en Vivo
+            meter_frame = ctk.CTkFrame(card, fg_color="#1E1E1E")
+            meter_frame.pack(fill="x", padx=10, pady=4)
 
-            ctk.CTkLabel(row, text="%").pack(side="right", padx=1)
+            pbar = ctk.CTkProgressBar(meter_frame, height=10)
+            pbar.set(0.0)
+            pbar.pack(fill="x", padx=8, pady=(5, 2))
 
-            entry = ctk.CTkEntry(row, width=45, justify="center")
-            entry.insert(0, str(duck_pct))
-            entry.pack(side="right", padx=2)
+            status_lbl = ctk.CTkLabel(
+                meter_frame,
+                text=f"Sonido actual: 0% | ⚪ En silencio (Umbral: {thresh_pct}%)",
+                font=("Segoe UI", 10, "italic"),
+                text_color="#9E9E9E"
+            )
+            status_lbl.pack(anchor="w", padx=8, pady=(0, 4))
+            self.trigger_live_widgets[app_name] = (pbar, status_lbl)
 
-            btn_sub = ctk.CTkButton(row, text="-", width=28, command=lambda name=app_name: self._step_trigger_vol(name, -5))
-            btn_sub.pack(side="right", padx=2)
+            # Fila 1: Nivel de Atenuación (Duck Volume)
+            vol_row = ctk.CTkFrame(card, fg_color="transparent")
+            vol_row.pack(fill="x", padx=10, pady=4)
 
-            ctk.CTkLabel(row, text="Bajar a:").pack(side="right", padx=4)
+            ctk.CTkLabel(vol_row, text="Bajar objetivo a:", font=("Segoe UI", 11)).pack(side="left")
 
-            slider = ctk.CTkSlider(
-                row,
+            btn_v_sub = ctk.CTkButton(vol_row, text="-", width=26, command=lambda name=app_name: self._step_trigger_vol(name, -5))
+            btn_v_sub.pack(side="left", padx=4)
+
+            entry_vol = ctk.CTkEntry(vol_row, width=42, justify="center")
+            entry_vol.insert(0, str(duck_pct))
+            entry_vol.pack(side="left", padx=2)
+
+            ctk.CTkLabel(vol_row, text="%").pack(side="left", padx=1)
+
+            btn_v_add = ctk.CTkButton(vol_row, text="+", width=26, command=lambda name=app_name: self._step_trigger_vol(name, 5))
+            btn_v_add.pack(side="left", padx=4)
+
+            slider_vol = ctk.CTkSlider(
+                vol_row,
                 from_=0.0,
                 to=1.0,
                 number_of_steps=100,
-                command=lambda val, name=app_name, ent=entry: self._on_trigger_slider_change(name, val, ent)
+                command=lambda val, name=app_name, ent=entry_vol: self._on_trigger_slider_change(name, val, ent)
             )
-            slider.set(duck_vol)
-            slider.pack(side="right", fill="x", expand=True, padx=8)
-            disable_slider_mousewheel(slider)
+            slider_vol.set(duck_vol)
+            slider_vol.pack(side="right", fill="x", expand=True, padx=8)
+            disable_slider_mousewheel(slider_vol)
 
-            entry.bind("<FocusOut>", lambda e, name=app_name, ent=entry, s=slider: self._validate_trigger_entry(name, ent, s))
-            entry.bind("<Return>", lambda e, name=app_name, ent=entry, s=slider: self._validate_trigger_entry(name, ent, s))
+            entry_vol.bind("<FocusOut>", lambda e, name=app_name, ent=entry_vol, s=slider_vol: self._validate_trigger_entry(name, ent, s))
+            entry_vol.bind("<Return>", lambda e, name=app_name, ent=entry_vol, s=slider_vol: self._validate_trigger_entry(name, ent, s))
+
+            # Fila 2: Umbral Mínimo de Sonido / Sensibilidad (Trigger Threshold)
+            thresh_row = ctk.CTkFrame(card, fg_color="transparent")
+            thresh_row.pack(fill="x", padx=10, pady=(2, 8))
+
+            ctk.CTkLabel(thresh_row, text="Activar si sonido >", font=("Segoe UI", 11, "bold"), text_color="#FFB74D").pack(side="left")
+
+            btn_t_sub = ctk.CTkButton(thresh_row, text="-", width=26, command=lambda name=app_name: self._step_trigger_thresh(name, -1))
+            btn_t_sub.pack(side="left", padx=4)
+
+            entry_thresh = ctk.CTkEntry(thresh_row, width=42, justify="center")
+            entry_thresh.insert(0, str(thresh_pct))
+            entry_thresh.pack(side="left", padx=2)
+
+            ctk.CTkLabel(thresh_row, text="%").pack(side="left", padx=1)
+
+            btn_t_add = ctk.CTkButton(thresh_row, text="+", width=26, command=lambda name=app_name: self._step_trigger_thresh(name, 1))
+            btn_t_add.pack(side="left", padx=4)
+
+            slider_thresh = ctk.CTkSlider(
+                thresh_row,
+                from_=0.01,
+                to=1.0,
+                number_of_steps=99,
+                command=lambda val, name=app_name, ent=entry_thresh: self._on_trigger_thresh_slider_change(name, val, ent)
+            )
+            slider_thresh.set(trig_thresh)
+            slider_thresh.pack(side="right", fill="x", expand=True, padx=8)
+            disable_slider_mousewheel(slider_thresh)
+
+            entry_thresh.bind("<FocusOut>", lambda e, name=app_name, ent=entry_thresh, s=slider_thresh: self._validate_trigger_thresh_entry(name, ent, s))
+            entry_thresh.bind("<Return>", lambda e, name=app_name, ent=entry_thresh, s=slider_thresh: self._validate_trigger_thresh_entry(name, ent, s))
 
     def _toggle_trigger_enabled(self, app_name: str, enabled: bool):
         if app_name in self.config_data["trigger_apps"]:
@@ -671,7 +742,7 @@ class AudioDuckerGUI(ctk.CTk):
                 self.config_data["trigger_apps"][app_name]["enabled"] = enabled
             else:
                 vol = float(self.config_data["trigger_apps"][app_name])
-                self.config_data["trigger_apps"][app_name] = {"enabled": enabled, "duck_volume": vol}
+                self.config_data["trigger_apps"][app_name] = {"enabled": enabled, "duck_volume": vol, "trigger_threshold": 0.05}
             self.save_config(show_msg=False)
 
     def _browse_and_add_trigger_exe(self):
@@ -683,7 +754,7 @@ class AudioDuckerGUI(ctk.CTk):
             filename = resolve_exe_name(filepath)
             if "trigger_apps" not in self.config_data:
                 self.config_data["trigger_apps"] = {}
-            self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30}
+            self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30, "trigger_threshold": 0.05}
             self.save_config(show_msg=False)
             self._refresh_triggers_list()
             messagebox.showinfo("App Activadora Agregada", f"Se detectó e identificó '{filename}'. Se agregó a las aplicaciones activadoras.")
@@ -702,7 +773,7 @@ class AudioDuckerGUI(ctk.CTk):
             if isinstance(self.config_data["trigger_apps"][app_name], dict):
                 self.config_data["trigger_apps"][app_name]["duck_volume"] = pct / 100.0
             else:
-                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": pct / 100.0}
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": pct / 100.0, "trigger_threshold": 0.05}
 
     def _step_trigger_vol(self, app_name: str, delta: int):
         if app_name in self.config_data["trigger_apps"]:
@@ -712,7 +783,7 @@ class AudioDuckerGUI(ctk.CTk):
             if isinstance(app_info, dict):
                 self.config_data["trigger_apps"][app_name]["duck_volume"] = new_val / 100.0
             else:
-                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": new_val / 100.0}
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": new_val / 100.0, "trigger_threshold": 0.05}
             self._refresh_triggers_list()
 
     def _validate_trigger_entry(self, app_name: str, entry_widget: ctk.CTkEntry, slider_widget: ctk.CTkSlider):
@@ -728,7 +799,43 @@ class AudioDuckerGUI(ctk.CTk):
             if isinstance(self.config_data["trigger_apps"][app_name], dict):
                 self.config_data["trigger_apps"][app_name]["duck_volume"] = val / 100.0
             else:
-                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val / 100.0}
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val / 100.0, "trigger_threshold": 0.05}
+
+    def _on_trigger_thresh_slider_change(self, app_name: str, val: float, entry_widget: ctk.CTkEntry):
+        pct = max(1, min(100, int(round(val * 100))))
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(pct))
+        if app_name in self.config_data["trigger_apps"]:
+            if isinstance(self.config_data["trigger_apps"][app_name], dict):
+                self.config_data["trigger_apps"][app_name]["trigger_threshold"] = pct / 100.0
+            else:
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": 0.25, "trigger_threshold": pct / 100.0}
+
+    def _step_trigger_thresh(self, app_name: str, delta: int):
+        if app_name in self.config_data["trigger_apps"]:
+            app_info = self.config_data["trigger_apps"][app_name]
+            curr = int((app_info.get("trigger_threshold", 0.05) if isinstance(app_info, dict) else 0.05) * 100)
+            new_val = max(1, min(100, curr + delta))
+            if isinstance(app_info, dict):
+                self.config_data["trigger_apps"][app_name]["trigger_threshold"] = new_val / 100.0
+            else:
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": 0.25, "trigger_threshold": new_val / 100.0}
+            self._refresh_triggers_list()
+
+    def _validate_trigger_thresh_entry(self, app_name: str, entry_widget: ctk.CTkEntry, slider_widget: ctk.CTkSlider):
+        try:
+            val = int(entry_widget.get().strip())
+            val = max(1, min(100, val))
+        except Exception:
+            val = 5
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(val))
+        slider_widget.set(val / 100.0)
+        if app_name in self.config_data["trigger_apps"]:
+            if isinstance(self.config_data["trigger_apps"][app_name], dict):
+                self.config_data["trigger_apps"][app_name]["trigger_threshold"] = val / 100.0
+            else:
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": 0.25, "trigger_threshold": val / 100.0}
 
     # VISTA 3: MICRÓFONO
     def _create_mic_view(self):
@@ -939,6 +1046,46 @@ class AudioDuckerGUI(ctk.CTk):
                         text=f"Pico actual: {peak_pct}% | ⚪ Silencio / Ruido de fondo (Umbral: {thresh_pct}%)",
                         text_color="#9E9E9E"
                     )
+            except Exception:
+                pass
+
+        elif self.active_tab == "triggers" and hasattr(self, "trigger_live_widgets"):
+            try:
+                active_procs = self.detector.get_active_audio_processes()
+                for app_name, (pbar, lbl) in list(self.trigger_live_widgets.items()):
+                    app_clean = app_name.lower().strip()
+                    p_no_ext = app_clean.replace(".exe", "")
+                    peak = 0.0
+                    for proc_k, proc_peak in active_procs.items():
+                        pk_clean = proc_k.lower().strip()
+                        if pk_clean in (app_clean, p_no_ext) or pk_clean.replace(".exe", "") == p_no_ext:
+                            peak = max(peak, proc_peak)
+
+                    app_info = self.config_data.get("trigger_apps", {}).get(app_name, {})
+                    thresh = float(app_info.get("trigger_threshold", 0.05)) if isinstance(app_info, dict) else 0.05
+
+                    pbar.set(min(1.0, peak))
+                    peak_pct = int(peak * 100)
+                    thresh_pct = int(thresh * 100)
+
+                    if peak >= thresh:
+                        pbar.configure(progress_color="#2E7D32")
+                        lbl.configure(
+                            text=f"Sonido actual: {peak_pct}% | 🟢 SUPERANDO UMBRAL DE ACTIVACIÓN ({thresh_pct}%)",
+                            text_color="#81C784"
+                        )
+                    elif peak > 0:
+                        pbar.configure(progress_color="#F57C00")
+                        lbl.configure(
+                            text=f"Sonido actual: {peak_pct}% | 🟠 SONIDO BAJO - NO ACTIVA (< {thresh_pct}%)",
+                            text_color="#FFB74D"
+                        )
+                    else:
+                        pbar.configure(progress_color="#1E88E5")
+                        lbl.configure(
+                            text=f"Sonido actual: 0% | ⚪ En silencio (Umbral: {thresh_pct}%)",
+                            text_color="#9E9E9E"
+                        )
             except Exception:
                 pass
 

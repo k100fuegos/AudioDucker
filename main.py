@@ -28,14 +28,14 @@ def load_config(config_path: str) -> Dict[str, Any]:
             "vlc.exe": {"enabled": False}
         },
         "trigger_apps": {
-            "discord.exe": {"enabled": True, "duck_volume": 0.25},
-            "chrome.exe": {"enabled": True, "duck_volume": 0.35},
-            "msedge.exe": {"enabled": True, "duck_volume": 0.35},
-            "firefox.exe": {"enabled": True, "duck_volume": 0.35},
-            "brave.exe": {"enabled": True, "duck_volume": 0.35},
-            "telegram.exe": {"enabled": True, "duck_volume": 0.25},
-            "zoom.exe": {"enabled": True, "duck_volume": 0.15},
-            "obs64.exe": {"enabled": True, "duck_volume": 0.30}
+            "discord.exe": {"enabled": True, "duck_volume": 0.25, "trigger_threshold": 0.05},
+            "chrome.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+            "msedge.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+            "firefox.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+            "brave.exe": {"enabled": True, "duck_volume": 0.35, "trigger_threshold": 0.05},
+            "telegram.exe": {"enabled": True, "duck_volume": 0.25, "trigger_threshold": 0.05},
+            "zoom.exe": {"enabled": True, "duck_volume": 0.15, "trigger_threshold": 0.05},
+            "obs64.exe": {"enabled": True, "duck_volume": 0.30, "trigger_threshold": 0.05}
         },
         "duck_on_microphone": False,
         "selected_microphone": "Default",
@@ -71,10 +71,15 @@ def load_config(config_path: str) -> Dict[str, Any]:
                     if isinstance(v, dict):
                         clean_triggers[k_clean] = {
                             "enabled": bool(v.get("enabled", True)),
-                            "duck_volume": float(v.get("duck_volume", 0.25))
+                            "duck_volume": float(v.get("duck_volume", 0.25)),
+                            "trigger_threshold": float(v.get("trigger_threshold", 0.05))
                         }
                     else:
-                        clean_triggers[k_clean] = {"enabled": True, "duck_volume": float(v)}
+                        clean_triggers[k_clean] = {
+                            "enabled": True,
+                            "duck_volume": float(v),
+                            "trigger_threshold": 0.05
+                        }
                 config["trigger_apps"] = clean_triggers
 
             return {**default_config, **config}

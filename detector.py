@@ -112,39 +112,42 @@ class AudioDetector:
         lowest_volume = 1.0
 
         # Normalizar diccionario de activadores para búsqueda flexible
-        clean_triggers: Dict[str, Tuple[bool, float]] = {}
+        # Tuple: (is_enabled, duck_volume, trigger_threshold)
+        clean_triggers: Dict[str, Tuple[bool, float, float]] = {}
         for app_k, app_v in trigger_apps.items():
             k_clean = str(app_k).lower().strip()
             is_enabled = True
             req_vol = default_duck_vol
+            req_thresh = self.threshold
             if isinstance(app_v, dict):
                 is_enabled = bool(app_v.get("enabled", True))
                 req_vol = float(app_v.get("duck_volume", default_duck_vol))
+                req_thresh = float(app_v.get("trigger_threshold", 0.05))
             else:
                 req_vol = float(app_v)
-            clean_triggers[k_clean] = (is_enabled, req_vol)
+            clean_triggers[k_clean] = (is_enabled, req_vol, req_thresh)
 
         for proc_name, peak in active_procs.items():
-            if peak >= self.threshold:
-                # Coincidencia flexible: proc_name, sin .exe o con .exe
-                matched_key = None
-                p_clean = proc_name.lower().strip()
-                p_no_ext = p_clean.replace(".exe", "")
-                p_with_exe = f"{p_no_ext}.exe"
+            # Coincidencia flexible: proc_name, sin .exe o con .exe
+            matched_key = None
+            p_clean = proc_name.lower().strip()
+            p_no_ext = p_clean.replace(".exe", "")
+            p_with_exe = f"{p_no_ext}.exe"
 
-                if p_clean in clean_triggers:
-                    matched_key = p_clean
-                elif p_with_exe in clean_triggers:
-                    matched_key = p_with_exe
-                elif p_no_ext in clean_triggers:
-                    matched_key = p_no_ext
+            if p_clean in clean_triggers:
+                matched_key = p_clean
+            elif p_with_exe in clean_triggers:
+                matched_key = p_with_exe
+            elif p_no_ext in clean_triggers:
+                matched_key = p_no_ext
 
-                if matched_key:
-                    is_enabled, req_vol = clean_triggers[matched_key]
-                    if is_enabled:
-                        speaking_triggers.add(matched_key)
-                        if req_vol < lowest_volume:
-                            lowest_volume = req_vol
+            if matched_key:
+                is_enabled, req_vol, req_thresh = clean_triggers[matched_key]
+                # Se activa SOLO si la app está habilitada Y el sonido supera el umbral de sensibilidad de esa app
+                if is_enabled and peak >= req_thresh:
+                    speaking_triggers.add(matched_key)
+                    if req_vol < lowest_volume:
+                        lowest_volume = req_vol
 
         if duck_on_microphone:
             mic_peak = self.get_microphone_peak(selected_microphone)
