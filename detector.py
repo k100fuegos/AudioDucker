@@ -1,15 +1,16 @@
 import logging
-from typing import Dict, Set, Tuple
+from typing import Dict, Set, Tuple, List, Optional
 from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
 import comtypes
+from comtypes import CLSCTX_ALL
 import psutil
 
 logger = logging.getLogger("AudioDucker.Detector")
 
 class AudioDetector:
     """
-    Escanea las sesiones de audio activas en Windows y mide el nivel de pico (Peak Value)
-    de cada aplicación registrada.
+    Escanea las sesiones de audio activas y micrófonos en Windows,
+    midiendo picos de audio (Peak Values) mediante WASAPI / PyCAW.
     """
 
     def __init__(self, audio_peak_threshold: float = 0.005):
@@ -43,44 +44,87 @@ class AudioDetector:
                 if not proc_name:
                     continue
 
-                # Consultar la interfaz IAudioMeterInformation para leer el nivel de audio (0.0 a 1.0)
                 meter = session._ctl.QueryInterface(IAudioMeterInformation)
                 peak_value = meter.GetPeakValue()
 
-                # Si hay múltiples instancias del mismo proceso (ej. múltiples pestañas de Chrome),
-                # guardamos el pico máximo detectado entre todas ellas.
                 if proc_name in active_processes:
                     active_processes[proc_name] = max(active_processes[proc_name], peak_value)
                 else:
                     active_processes[proc_name] = peak_value
 
-            except Exception as e:
-                # Ignorar sesiones cerradas, sin permisos o temporales
+            except Exception:
                 continue
 
         return active_processes
 
-    def check_triggers(self, trigger_apps: Dict[str, float], default_duck_vol: float) -> Tuple[bool, float, Set[str]]:
+    def get_available_microphones(self) -> List[str]:
         """
-        Analiza si alguna de las aplicaciones trigger está reproduciendo sonido por encima del umbral.
-        
-        Retorna:
-            - is_triggered (bool): True si al menos una app trigger está hablando.
-            - target_volume (float): El porcentaje de volumen más bajo exigido por las apps activas.
-            - active_trigger_names (Set[str]): Nombres de las apps que están activando la bajada de volumen.
+        Obtiene la lista de nombres de micrófonos / dispositivos de entrada activos en el sistema.
+        """
+        mics = ["Default"]
+        try:
+            devices = AudioUtilities.GetAllDevices()
+            for dev in devices:
+                if dev.id and dev.id.startswith("{0.0.1."):
+                    name = dev.FriendlyName
+                    if name and name not in mics:
+                        mics.append(name)
+        except Exception as e:
+            logger.debug(f"Error al listar micrófonos: {e}")
+        return mics
+
+    def get_microphone_peak(self, mic_name: str = "Default") -> float:
+        """
+        Mide el nivel de pico de audio actual (0.0 a 1.0) del micrófono especificado.
+        """
+        try:
+            if mic_name == "Default" or not mic_name:
+                mic_dev = AudioUtilities.GetMicrophone()
+                if mic_dev:
+                    meter = mic_dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
+                    return meter.GetPeakValue()
+            else:
+                devices = AudioUtilities.GetAllDevices()
+                for dev in devices:
+                    if dev.id and dev.id.startswith("{0.0.1.") and dev.FriendlyName == mic_name:
+                        meter = dev._dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
+                        return meter.GetPeakValue()
+        except Exception as e:
+            logger.debug(f"Error leyendo pico del micrófono '{mic_name}': {e}")
+        return 0.0
+
+    def check_triggers(
+        self,
+        trigger_apps: Dict[str, float],
+        default_duck_vol: float,
+        duck_on_microphone: bool = False,
+        selected_microphone: str = "Default",
+        mic_duck_volume: float = 0.20,
+        mic_peak_threshold: float = 0.01
+    ) -> Tuple[bool, float, Set[str]]:
+        """
+        Analiza si alguna aplicación trigger o el micrófono están produciendo sonido.
         """
         active_procs = self.get_active_audio_processes()
         speaking_triggers = set()
         lowest_volume = 1.0
 
+        # 1. Escanear aplicaciones activas
         for proc_name, peak in active_procs.items():
             if peak >= self.threshold:
-                # Verificar si esta app está en la lista de triggers configuradas
                 if proc_name in trigger_apps:
                     speaking_triggers.add(proc_name)
                     required_vol = trigger_apps[proc_name]
                     if required_vol < lowest_volume:
                         lowest_volume = required_vol
+
+        # 2. Escanear micrófono (si está activado ON/OFF)
+        if duck_on_microphone:
+            mic_peak = self.get_microphone_peak(selected_microphone)
+            if mic_peak >= mic_peak_threshold:
+                speaking_triggers.add(f"🎤 Micrófono ({selected_microphone})")
+                if mic_duck_volume < lowest_volume:
+                    lowest_volume = mic_duck_volume
 
         if speaking_triggers:
             return True, lowest_volume, speaking_triggers

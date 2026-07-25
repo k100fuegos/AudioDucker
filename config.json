@@ -2,6 +2,10 @@
   "target_app": "spotify.exe",
   "default_volume": 1.0,
   "default_duck_volume": 0.20,
+  "duck_on_microphone": false,
+  "selected_microphone": "Default",
+  "mic_duck_volume": 0.20,
+  "mic_peak_threshold": 0.01,
   "trigger_apps": {
     "discord.exe": 0.25,
     "chrome.exe": 0.35,

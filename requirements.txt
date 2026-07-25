@@ -2,3 +2,5 @@ pycaw>=2.0.1
 comtypes>=1.4.0
 psutil>=5.9.0
 pywin32>=306
+customtkinter>=5.2.0
+Pillow>=10.0.0

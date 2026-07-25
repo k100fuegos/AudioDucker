@@ -1,8 +1,21 @@
-# 🎵 AudioDucker para Windows
+![AudioDucker Banner](assets/banner.png)
 
-**AudioDucker** es una aplicación en Python que ajusta dinámicamente el volumen de tu reproductor de música (**Spotify** por defecto) cuando detecta que otras aplicaciones (**Discord**, **Chrome**, **Firefox**, **Zoom**, **Telegram**, etc.) están **emitiendo sonido**.
+# 🎵 AudioDucker v2.0 para Windows
 
-A diferencia de otros programas sencillos, AudioDucker utiliza las APIs de sonido nativas de Windows (WASAPI / PyCAW) para medir los **picos de volumen reales**. Si Chrome o Discord están abiertos pero en silencio, el volumen de Spotify NO bajará. Solo bajará en el instante exacto en que comiencen a reproducir audio (mensajes de voz, llamadas, vídeos, ChatGPT hablado, etc.).
+**AudioDucker** es una aplicación inteligente para Windows que atenúa automáticamente el volumen de tu reproductor de música (**Spotify** por defecto) cuando detecta que otras aplicaciones (**Discord**, **Chrome**, **Firefox**, **Zoom**, **Telegram**, etc.) o tu **Micrófono** están **emitiendo sonido**.
+
+A diferencia de otros programas convencionales, AudioDucker utiliza las APIs de sonido nativas de Windows (WASAPI / PyCAW) para medir los **picos de volumen reales**. Si Chrome o Discord están abiertos pero en silencio, el volumen de Spotify NO bajará. Solo se atenuará en el instante exacto en que comiencen a reproducir audio o cuando comiences a hablar por tu micrófono.
+
+---
+
+## ✨ Novedades en la Versión 2.0
+
+- 🖥️ **Interfaz Gráfica Moderna (GUI)**: Panel visual completo con modo oscuro integrado.
+- 📁 **Explorador de Archivos `.exe`**: Botón *"Agregar (.exe)"* para seleccionar cualquier ejecutable desde el Explorador de Windows sin escribir rutas manualmente.
+- 🎤 **Atenuación por Micrófono (ON/OFF)**: Casilla/Switch para activar o desactivar la atenuación cuando TÚ hablas por el micrófono, con selector del dispositivo de entrada específico.
+- 🎚️ **Control de Transiciones de Volumen**: Elige entre cambios **Instantáneos (0s - de golpe)** o **Desvanecimientos Suaves (0.1s a 2.0s)**.
+- 🚀 **Integración de Inicio Automático**: Botón para registrar el ejecutable en la carpeta de Inicio de Windows (`shell:startup`).
+- 🎨 **Recursos e Icono Personalizado**: Compilado con icono nativo `assets/logo.ico`.
 
 ---
 
@@ -10,33 +23,28 @@ A diferencia de otros programas sencillos, AudioDucker utiliza las APIs de sonid
 
 ```
 AudioDucker/
-├── main.py                  # Bucle principal y orquestador del servicio
-├── detector.py              # Medición de picos de audio de procesos activos
-├── volume_controller.py     # Control y transiciones de volumen de la app objetivo
-├── config.json              # Configuración de aplicaciones, volúmenes y tiempos
-├── requirements.txt         # Dependencias de Python necesarias
-└── README.md                # Guía de uso e instalación
+├── assets/                  # Iconos y recursos gráficos (banner.png, logo.ico, logo.png)
+├── AudioDucker.exe          # Ejecutable listo para usar sin consola
+├── main.py                  # Punto de entrada y motor multihilo de atenuación
+├── gui.py                   # Interfaz gráfica de usuario con CustomTkinter
+├── detector.py              # Medición de picos de sonido de procesos y micrófonos
+├── volume_controller.py     # Transiciones instantáneas y suaves de volumen WASAPI
+├── config.json              # Configuración persistente en formato JSON
+├── create_startup_shortcut.ps1 # Script de inicio automático en Windows
+├── requirements.txt         # Dependencias de Python
+└── README.md                # Documentación en GitHub
 ```
 
 ---
 
-## 🚀 Requisitos e Instalación
+## 🚀 Instalación y Uso
 
-1. Asegúrate de tener Python 3.8 o superior instalado en Windows.
-2. Abre la consola de comandos o PowerShell en la carpeta del proyecto (`C:\Users\kelvi\Downloads\AudioDucker`):
+### Opción 1: Ejecutable listo (`AudioDucker.exe`)
+Simplemente ejecuta `AudioDucker.exe`. Se abrirá el panel de control gráfico y el servicio comenzará a funcionar automáticamente en segundo plano.
 
+### Opción 2: Ejecutar desde código fuente en Python
 ```bash
-cd C:\Users\kelvi\Downloads\AudioDucker
 pip install -r requirements.txt
-```
-
----
-
-## 🎮 Ejecución
-
-Para iniciar el programa, ejecuta:
-
-```bash
 python main.py
 ```
 
@@ -44,13 +52,17 @@ python main.py
 
 ## ⚙️ Configuración (`config.json`)
 
-El archivo `config.json` se crea automáticamente la primera vez que ejecutas el programa. Puedes modificarlo con cualquier editor de texto (como Bloc de notas o VS Code).
+Toda la configuración se puede gestionar visualmente desde la GUI o editando `config.json`:
 
 ```json
 {
   "target_app": "spotify.exe",
   "default_volume": 1.0,
   "default_duck_volume": 0.20,
+  "duck_on_microphone": false,
+  "selected_microphone": "Default",
+  "mic_duck_volume": 0.20,
+  "mic_peak_threshold": 0.01,
   "trigger_apps": {
     "discord.exe": 0.25,
     "chrome.exe": 0.35,
@@ -64,45 +76,26 @@ El archivo `config.json` se crea automáticamente la primera vez que ejecutas el
   "transition_duration_seconds": 0.4,
   "release_delay_seconds": 1.0,
   "audio_peak_threshold": 0.005,
-  "check_interval_seconds": 0.05,
-  "verbose_logging": true
+  "check_interval_seconds": 0.05
 }
 ```
 
-### Explicación de Opciones:
+---
 
-- **`target_app`**: Proceso ejecutable de la aplicación que se atenúa (ej. `"spotify.exe"`).
-- **`default_volume`**: Volumen normal de la app objetivo cuando nadie está hablando (`1.0` = 100%).
-- **`default_duck_volume`**: Volumen por defecto (`0.20` = 20%) para apps que no estén registradas específicamente en `trigger_apps`.
-- **`trigger_apps`**: Diccionario con los nombres del ejecutable en minúsculas y el porcentaje de volumen objetivo. **¡Puedes agregar cualquier aplicación de Windows aquí!**
-  - Ejemplo: `"vlc.exe": 0.20`, `"league of legends.exe": 0.10`.
-- **`transition_duration_seconds`**:
-  - `0`: Cambio **INSTANTÁNEO** y de golpe (sin transición).
-  - `0.3`, `0.5`, `1.0`: Duración del desvanecimiento suave (fade in / fade out) en segundos.
-- **`release_delay_seconds`**: Tiempo de espera (en segundos) tras silenciarse el audio antes de restaurar Spotify al 100%. Evita altibajos molestos entre frases o palabras.
-- **`audio_peak_threshold`**: Umbral mínimo del medidor de picos (de `0.0` a `1.0`) para considerar que una app está emitiendo sonido. Ignora ruido blanco.
-- **`check_interval_seconds`**: Frecuencia de escaneo en segundos (`0.05` = 20 revisiones por segundo).
+## 🤖 Desarrollo con Inteligencia Artificial
+
+Este proyecto fue concebido, diseñado y desarrollado en par-programming utilizando tecnologías avanzadas de Inteligencia Artificial:
+
+- **Modelo de IA**: **Google Antigravity AI (Gemini 3.6 Flash / Pro)** desarrollado por Google DeepMind.
+- **Áreas de automatización**: Integración WASAPI de Windows, multihilo asíncrono, diseño de GUI moderna y empaquetado autónomo.
 
 ---
 
-## 📦 Cómo convertirlo en un `.exe` e iniciarlo con Windows
+## 📦 Compilación a `.exe`
 
-Si quieres que AudioDucker se ejecute en segundo plano sin mostrar la consola y se inicie automáticamente al encender la computadora:
-
-### 1. Compilar a `.exe` con PyInstaller
-Ejecuta los siguientes comandos en tu terminal:
+Para volver a generar el ejecutable `.exe` independiente con icono personalizado:
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile --name "AudioDucker" main.py
+python -m PyInstaller --noconsole --onefile --icon=assets/logo.ico --name "AudioDucker" main.py
 ```
-
-Encontrarás el ejecutable listo en la carpeta `dist/AudioDucker.exe`.
-
-### 2. Copiar `config.json` junto al ejecutable
-Copia `config.json` a la misma carpeta donde esté `AudioDucker.exe`.
-
-### 3. Iniciar automáticamente con Windows (Startup)
-1. Presiona `Win + R`, escribe `shell:startup` y presiona **Enter**.
-2. Copia un acceso directo de `AudioDucker.exe` dentro de esa carpeta.
-3. ¡Listo! Cada vez que enciendas tu PC, AudioDucker se ejecutará en segundo plano.
