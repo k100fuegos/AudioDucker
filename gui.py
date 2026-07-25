@@ -14,24 +14,67 @@ logger = logging.getLogger("AudioDucker.GUI")
 
 def resolve_exe_name(filepath: str) -> str:
     """
-    Resuelve el nombre ejecutable real a partir de un archivo .exe o un acceso directo .lnk.
+    Resuelve inteligentemente el ejecutable real a partir de un archivo .exe,
+    un acceso directo .lnk clásico o un acceso directo de la Microsoft Store (UWP).
     """
     filepath = filepath.strip()
+    
     if filepath.lower().endswith(".lnk"):
+        target_name = None
+
+        # Método 1: Shell.Application (Soporta Store Apps como Spotify, Apple Music, WhatsApp, etc.)
         try:
             import win32com.client
-            shell = win32com.client.Dispatch("WScript.Shell")
-            shortcut = shell.CreateShortcut(filepath)
-            target = shortcut.TargetPath
-            if target and target.lower().endswith(".exe"):
-                return os.path.basename(target).lower()
-        except Exception:
-            pass
+            folder_path = os.path.dirname(os.path.abspath(filepath))
+            file_name = os.path.basename(filepath)
+            shell = win32com.client.Dispatch("Shell.Application")
+            folder = shell.NameSpace(folder_path)
+            item = folder.ParseName(file_name)
+            if item and item.IsLink:
+                link = item.GetLink
+                if link and link.Target:
+                    t_path = str(link.Target.Path)
+                    t_name = str(link.Target.Name)
 
-    filename = os.path.basename(filepath).lower()
-    if not filename.endswith(".exe") and not filename.endswith(".lnk"):
+                    if t_path.lower().endswith(".exe"):
+                        return os.path.basename(t_path).lower()
+
+                    if t_name and t_name.strip():
+                        target_name = t_name.strip().lower()
+                    elif t_path:
+                        parts = t_path.split("!")
+                        target_name = parts[-1].split(".")[-1].lower()
+        except Exception as e:
+            logger.debug(f"Error resolviendo acceso directo con Shell.Application: {e}")
+
+        # Método 2: WScript.Shell (Para accesos directos estándar con TargetPath accesible)
+        if not target_name:
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortcut(filepath)
+                target = shortcut.TargetPath
+                if target and target.lower().endswith(".exe"):
+                    return os.path.basename(target).lower()
+            except Exception as e:
+                logger.debug(f"Error resolviendo acceso directo con WScript.Shell: {e}")
+
+        if target_name:
+            target_name = target_name.replace(" - acceso directo", "").replace(" - shortcut", "").strip()
+            target_clean = target_name.replace(" ", "")
+            if not target_clean.endswith(".exe"):
+                target_clean += ".exe"
+            return target_clean
+
+    # Fallback para archivos directos
+    filename = os.path.basename(filepath).lower().strip()
+    filename = filename.replace(" - acceso directo.lnk", ".exe").replace(" - acceso directo", "")
+    if filename.endswith(".lnk"):
+        filename = filename.replace(".lnk", "")
+    if not filename.endswith(".exe"):
         filename += ".exe"
-    return filename
+    
+    return filename.replace(" ", "")
 
 def disable_slider_mousewheel(slider: ctk.CTkSlider):
     try:
@@ -174,7 +217,6 @@ class AudioDuckerGUI(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        # BARRA LATERAL DE NAVEGACIÓN
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(5, weight=1)
@@ -227,7 +269,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.btn_nav_settings.grid(row=4, column=0, padx=15, pady=6, sticky="ew")
 
-        # Botón Reiniciar Servicio
         btn_restart = ctk.CTkButton(
             self.sidebar_frame,
             text="🔄 Reiniciar Servicio",
@@ -386,7 +427,7 @@ class AudioDuckerGUI(ctk.CTk):
             self.config_data["target_apps"][filename] = {"enabled": True}
             self.save_config(show_msg=False)
             self._refresh_targets_list()
-            messagebox.showinfo("App Objetivo Agregada", f"Se agregó '{filename}' a las aplicaciones objetivo activadas.")
+            messagebox.showinfo("App Objetivo Agregada", f"Se detectó e identificó '{filename}'. Se agregó a las aplicaciones objetivo activadas.")
 
     def _delete_target_app(self, app_name: str):
         if app_name in self.config_data["target_apps"]:
@@ -509,7 +550,7 @@ class AudioDuckerGUI(ctk.CTk):
             self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30}
             self.save_config(show_msg=False)
             self._refresh_triggers_list()
-            messagebox.showinfo("App Activadora Agregada", f"Se agregó '{filename}' a las aplicaciones activadoras.")
+            messagebox.showinfo("App Activadora Agregada", f"Se detectó e identificó '{filename}'. Se agregó a las aplicaciones activadoras.")
 
     def _delete_trigger_app(self, app_name: str):
         if app_name in self.config_data["trigger_apps"]:

@@ -1,16 +1,6 @@
 {
   "version": "2.01",
-  "target_apps": {
-    "spotify.exe": {
-      "enabled": true
-    },
-    "applemusic.exe": {
-      "enabled": true
-    },
-    "vlc.exe": {
-      "enabled": false
-    }
-  },
+  "target_apps": {},
   "trigger_apps": {
     "discord.exe": {
       "enabled": true,
@@ -19,38 +9,14 @@
     "chrome.exe": {
       "enabled": true,
       "duck_volume": 0.35
-    },
-    "msedge.exe": {
-      "enabled": true,
-      "duck_volume": 0.35
-    },
-    "firefox.exe": {
-      "enabled": true,
-      "duck_volume": 0.35
-    },
-    "brave.exe": {
-      "enabled": true,
-      "duck_volume": 0.35
-    },
-    "telegram.exe": {
-      "enabled": true,
-      "duck_volume": 0.25
-    },
-    "zoom.exe": {
-      "enabled": true,
-      "duck_volume": 0.15
-    },
-    "obs64.exe": {
-      "enabled": true,
-      "duck_volume": 0.30
     }
   },
   "duck_on_microphone": false,
   "selected_microphone": "Default",
-  "mic_duck_volume": 0.20,
-  "mic_peak_threshold": 0.05,
-  "transition_duration_seconds": 0.4,
-  "release_delay_seconds": 1.0,
+  "mic_duck_volume": 0.2,
+  "mic_peak_threshold": 0.08,
+  "transition_duration_seconds": 0.2,
+  "release_delay_seconds": 0.2,
   "audio_peak_threshold": 0.005,
   "check_interval_seconds": 0.05,
   "verbose_logging": true
