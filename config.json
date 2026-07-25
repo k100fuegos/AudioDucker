@@ -2,14 +2,10 @@
   "version": "2.01",
   "target_apps": {
     "spotify.exe": {
-      "enabled": true,
-      "default_volume": 1.0,
-      "duck_volume": 0.2
+      "enabled": true
     },
     "vlc.exe": {
-      "enabled": false,
-      "default_volume": 1.0,
-      "duck_volume": 0.15
+      "enabled": false
     }
   },
   "trigger_apps": {
@@ -43,15 +39,15 @@
     },
     "obs64.exe": {
       "enabled": true,
-      "duck_volume": 0.3
+      "duck_volume": 0.30
     }
   },
-  "duck_on_microphone": true,
-  "selected_microphone": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
-  "mic_duck_volume": 0.0,
+  "duck_on_microphone": false,
+  "selected_microphone": "Default",
+  "mic_duck_volume": 0.20,
   "mic_peak_threshold": 0.01,
   "transition_duration_seconds": 0.4,
-  "release_delay_seconds": 0.7,
+  "release_delay_seconds": 1.0,
   "audio_peak_threshold": 0.005,
   "check_interval_seconds": 0.05,
   "verbose_logging": true

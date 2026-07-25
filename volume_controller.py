@@ -16,9 +16,6 @@ class SingleAppVolumeControl:
         self.app_name = app_name.lower()
 
     def _get_interfaces(self) -> List[ISimpleAudioVolume]:
-        """
-        Obtiene de forma segura todas las interfaces de volumen WASAPI activas para esta app.
-        """
         interfaces = []
         if pythoncom:
             try:
@@ -41,16 +38,12 @@ class SingleAppVolumeControl:
         return interfaces
 
     def set_volume(self, target_volume: float, duration_seconds: float = 0.4) -> bool:
-        """
-        Establece el volumen máster para todas las instancias activas del proceso.
-        """
         target_volume = max(0.0, min(1.0, float(target_volume)))
         interfaces = self._get_interfaces()
         if not interfaces:
             return False
 
         try:
-            # Caso 1: Cambio instantáneo (duration <= 0)
             if duration_seconds <= 0:
                 for iface in interfaces:
                     try:
@@ -59,7 +52,6 @@ class SingleAppVolumeControl:
                         pass
                 return True
 
-            # Caso 2: Transición suave (duration > 0)
             try:
                 current_vol = interfaces[0].GetMasterVolume()
             except Exception:
@@ -97,6 +89,7 @@ class SingleAppVolumeControl:
 class MultiVolumeController:
     """
     Controla el volumen de MÚLTIPLES aplicaciones objetivo de forma simultánea.
+    El nivel de volumen de atenuación es determinado por la app activadora activa.
     """
 
     def __init__(self, transition_duration_seconds: float = 0.4):
@@ -109,25 +102,23 @@ class MultiVolumeController:
         trigger_lowest_ratio: float = 1.0,
         duration_seconds: Optional[float] = None
     ):
-        """
-        Ajusta de forma simultánea todas las aplicaciones objetivo habilitadas (enabled=True).
-        """
         duration = duration_seconds if duration_seconds is not None else self.transition_duration
 
         for app_name, app_info in target_apps_config.items():
-            if not isinstance(app_info, dict):
-                continue
-            
-            # Verificar si esta app objetivo está habilitada (ON)
-            if not app_info.get("enabled", True):
+            is_enabled = True
+            if isinstance(app_info, dict):
+                is_enabled = app_info.get("enabled", True)
+
+            if not is_enabled:
                 continue
 
             app_control = SingleAppVolumeControl(app_name)
             
             if is_ducked:
-                app_duck_vol = float(app_info.get("duck_volume", 0.20))
-                target_vol = min(app_duck_vol, trigger_lowest_ratio)
+                # El porcentaje de bajada lo define la app activadora que generó el evento
+                target_vol = max(0.0, min(1.0, trigger_lowest_ratio))
             else:
-                target_vol = float(app_info.get("default_volume", 1.0))
+                # Al silenciarse, restaura al 100% (1.0)
+                target_vol = 1.0
 
             app_control.set_volume(target_vol, duration_seconds=duration)
