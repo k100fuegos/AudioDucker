@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
 import psutil
 
@@ -11,11 +11,29 @@ except ImportError:
 
 logger = logging.getLogger("AudioDucker.VolumeController")
 
+# Mapeo de grupos de procesos vinculados (ej. Apple Music usa ampapp.exe, amplibraryagent.exe, etc.)
+APP_PROCESS_GROUPS: Dict[str, List[str]] = {
+    "applemusic.exe": ["applemusic.exe", "ampapp.exe", "amplibraryagent.exe", "applemusicaudiohost.exe", "apple.music.exe"],
+    "spotify.exe": ["spotify.exe"],
+    "chrome.exe": ["chrome.exe"],
+    "msedge.exe": ["msedge.exe", "edge.exe"],
+    "firefox.exe": ["firefox.exe"]
+}
+
 class SingleAppVolumeControl:
     def __init__(self, app_name: str):
         self.app_name = app_name.lower().strip()
         self.app_no_ext = self.app_name.replace(".exe", "")
         self.app_with_exe = f"{self.app_no_ext}.exe"
+
+        # Obtener todos los nombres de proceso asociados a este grupo
+        self.target_names: Set[str] = {self.app_name, self.app_no_ext, self.app_with_exe}
+        for main_app, aliases in APP_PROCESS_GROUPS.items():
+            if self.app_name in aliases or self.app_with_exe in aliases or self.app_no_ext in aliases or main_app == self.app_name:
+                for alias in aliases:
+                    alias_clean = alias.lower().strip()
+                    self.target_names.add(alias_clean)
+                    self.target_names.add(alias_clean.replace(".exe", ""))
 
     def _get_interfaces(self) -> List[ISimpleAudioVolume]:
         interfaces = []
@@ -33,8 +51,8 @@ class SingleAppVolumeControl:
                         proc_name = session.Process.name().lower().strip()
                         proc_no_ext = proc_name.replace(".exe", "")
                         
-                        # Coincidencia flexible de proceso
-                        if proc_name in (self.app_name, self.app_with_exe, self.app_no_ext) or proc_no_ext == self.app_no_ext:
+                        # Coincidir si el proceso es el principal o cualquiera de sus sub-procesos vinculados
+                        if proc_name in self.target_names or proc_no_ext in self.target_names:
                             interfaces.append(session._ctl.QueryInterface(ISimpleAudioVolume))
                     except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
                         continue

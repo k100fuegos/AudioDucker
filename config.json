@@ -1,6 +1,13 @@
 {
   "version": "2.01",
-  "target_apps": {},
+  "target_apps": {
+    "spotify.exe": {
+      "enabled": false
+    },
+    "applemusic.exe": {
+      "enabled": true
+    }
+  },
   "trigger_apps": {
     "discord.exe": {
       "enabled": true,
@@ -12,7 +19,7 @@
     }
   },
   "duck_on_microphone": false,
-  "selected_microphone": "Default",
+  "selected_microphone": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
   "mic_duck_volume": 0.2,
   "mic_peak_threshold": 0.08,
   "transition_duration_seconds": 0.2,

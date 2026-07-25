@@ -13,16 +13,11 @@ from detector import AudioDetector
 logger = logging.getLogger("AudioDucker.GUI")
 
 def resolve_exe_name(filepath: str) -> str:
-    """
-    Resuelve inteligentemente el ejecutable real a partir de un archivo .exe,
-    un acceso directo .lnk clásico o un acceso directo de la Microsoft Store (UWP).
-    """
     filepath = filepath.strip()
     
     if filepath.lower().endswith(".lnk"):
         target_name = None
 
-        # Método 1: Shell.Application (Soporta Store Apps como Spotify, Apple Music, WhatsApp, etc.)
         try:
             import win32com.client
             folder_path = os.path.dirname(os.path.abspath(filepath))
@@ -47,7 +42,6 @@ def resolve_exe_name(filepath: str) -> str:
         except Exception as e:
             logger.debug(f"Error resolviendo acceso directo con Shell.Application: {e}")
 
-        # Método 2: WScript.Shell (Para accesos directos estándar con TargetPath accesible)
         if not target_name:
             try:
                 import win32com.client
@@ -66,7 +60,6 @@ def resolve_exe_name(filepath: str) -> str:
                 target_clean += ".exe"
             return target_clean
 
-    # Fallback para archivos directos
     filename = os.path.basename(filepath).lower().strip()
     filename = filename.replace(" - acceso directo.lnk", ".exe").replace(" - acceso directo", "")
     if filename.endswith(".lnk"):
@@ -104,8 +97,8 @@ class AudioDuckerGUI(ctk.CTk):
 
         # Configuración de ventana
         self.title("AudioDucker v2.01 - Control de Volumen Inteligente")
-        self.geometry("920x680")
-        self.minsize(860, 600)
+        self.geometry("940x680")
+        self.minsize(880, 600)
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
@@ -269,6 +262,17 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.btn_nav_settings.grid(row=4, column=0, padx=15, pady=6, sticky="ew")
 
+        # Botón para inspeccionar procesos sonando en vivo
+        btn_detect_live = ctk.CTkButton(
+            self.sidebar_frame,
+            text="🔍 Escanear Sonidos",
+            fg_color="#00897B",
+            hover_color="#00695C",
+            font=("Segoe UI", 12, "bold"),
+            command=self._show_live_processes_modal
+        )
+        btn_detect_live.grid(row=6, column=0, padx=15, pady=(10, 4), sticky="ew")
+
         btn_restart = ctk.CTkButton(
             self.sidebar_frame,
             text="🔄 Reiniciar Servicio",
@@ -277,7 +281,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self._restart_service
         )
-        btn_restart.grid(row=6, column=0, padx=15, pady=(10, 5), sticky="ew")
+        btn_restart.grid(row=7, column=0, padx=15, pady=4, sticky="ew")
 
         btn_save = ctk.CTkButton(
             self.sidebar_frame,
@@ -287,7 +291,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.save_config
         )
-        btn_save.grid(row=7, column=0, padx=15, pady=(5, 5), sticky="ew")
+        btn_save.grid(row=8, column=0, padx=15, pady=4, sticky="ew")
 
         btn_startup = ctk.CTkButton(
             self.sidebar_frame,
@@ -297,7 +301,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self._install_startup
         )
-        btn_startup.grid(row=8, column=0, padx=15, pady=(5, 20), sticky="ew")
+        btn_startup.grid(row=9, column=0, padx=15, pady=(4, 20), sticky="ew")
 
         self.main_content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_content_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
@@ -330,6 +334,81 @@ class AudioDuckerGUI(ctk.CTk):
             self.mic_view.pack(fill="both", expand=True)
         elif tab_name == "settings":
             self.settings_view.pack(fill="both", expand=True)
+
+    # MODAL DE PROCESOS ACTIVOS EN TIEMPO REAL
+    def _show_live_processes_modal(self):
+        modal = ctk.CTkToplevel(self)
+        modal.title("🔍 Escáner de Procesos de Audio en Vivo")
+        modal.geometry("540x450")
+        modal.grab_set()
+
+        ctk.CTkLabel(
+            modal,
+            text="Procesos de Audio Registrados en Windows",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00BFA5"
+        ).pack(pady=10, padx=15, anchor="w")
+
+        ctk.CTkLabel(
+            modal,
+            text="Haz clic en cualquier programa detectado para agregarlo directamente a tu lista:",
+            font=("Segoe UI", 11, "italic"),
+            text_color="#B0BEC5"
+        ).pack(pady=(0, 10), padx=15, anchor="w")
+
+        scroll = ctk.CTkScrollableFrame(modal)
+        scroll.pack(fill="both", expand=True, padx=15, pady=10)
+
+        procs = self.detector.get_active_audio_processes()
+        if not procs:
+            ctk.CTkLabel(scroll, text="No hay programas emitiendo audio en este instante.").pack(pady=20)
+        else:
+            for proc_name, peak in procs.items():
+                if proc_name.startswith("@"):
+                    continue
+                row = ctk.CTkFrame(scroll)
+                row.pack(fill="x", pady=4, padx=2)
+
+                peak_pct = int(peak * 100)
+                ctk.CTkLabel(row, text=f"🔊 {proc_name} ({peak_pct}%)", font=("Segoe UI", 12, "bold")).pack(side="left", padx=10, pady=8)
+
+                btn_add_t = ctk.CTkButton(
+                    row,
+                    text="🎯 Asignar Objetivo",
+                    width=130,
+                    fg_color="#2E7D32",
+                    hover_color="#1B5E20",
+                    command=lambda p=proc_name: self._add_proc_from_scanner(p, is_target=True, modal_win=modal)
+                )
+                btn_add_t.pack(side="right", padx=5)
+
+                btn_add_tr = ctk.CTkButton(
+                    row,
+                    text="📱 Asignar Activadora",
+                    width=135,
+                    fg_color="#1565C0",
+                    hover_color="#0D47A1",
+                    command=lambda p=proc_name: self._add_proc_from_scanner(p, is_target=False, modal_win=modal)
+                )
+                btn_add_tr.pack(side="right", padx=5)
+
+    def _add_proc_from_scanner(self, proc_name: str, is_target: bool, modal_win: ctk.CTkToplevel):
+        proc_clean = proc_name.lower().strip()
+        if is_target:
+            if "target_apps" not in self.config_data:
+                self.config_data["target_apps"] = {}
+            self.config_data["target_apps"][proc_clean] = {"enabled": True}
+            self.save_config(show_msg=False)
+            self._refresh_targets_list()
+            messagebox.showinfo("Proceso Agregado", f"Se agregó '{proc_clean}' como App Objetivo.")
+        else:
+            if "trigger_apps" not in self.config_data:
+                self.config_data["trigger_apps"] = {}
+            self.config_data["trigger_apps"][proc_clean] = {"enabled": True, "duck_volume": 0.30}
+            self.save_config(show_msg=False)
+            self._refresh_triggers_list()
+            messagebox.showinfo("Proceso Agregado", f"Se agregó '{proc_clean}' como App Activadora.")
+        modal_win.destroy()
 
     # VISTA 1: APPS OBJETIVO
     def _create_targets_view(self):
