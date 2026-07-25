@@ -1,106 +1,105 @@
 import logging
 import time
-from typing import Optional
+from typing import Dict, Any, Optional, List
 from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
 import psutil
 
 logger = logging.getLogger("AudioDucker.VolumeController")
 
-class VolumeController:
-    """
-    Controla el volumen de la aplicación objetivo (ejemplo: Spotify)
-    mediante la interfaz ISimpleAudioVolume de WASAPI.
-    """
+class SingleAppVolumeControl:
+    def __init__(self, app_name: str):
+        self.app_name = app_name.lower()
 
-    def __init__(self, target_app_name: str, transition_duration_seconds: float = 0.4):
-        self.target_app_name = target_app_name.lower()
-        self.transition_duration = transition_duration_seconds
-        self.last_applied_volume: Optional[float] = None
-
-    def _get_target_session_interface(self) -> Optional[ISimpleAudioVolume]:
-        """
-        Busca dinámicamente la sesión de audio del proceso objetivo.
-        """
+    def _get_interfaces() -> List[ISimpleAudioVolume]:
+        interfaces = []
         try:
             sessions = AudioUtilities.GetAllSessions()
             for session in sessions:
                 if session.Process:
                     try:
                         proc_name = session.Process.name().lower()
-                        if proc_name == self.target_app_name:
-                            return session._ctl.QueryInterface(ISimpleAudioVolume)
+                        if proc_name == self.app_name:
+                            interfaces.append(session._ctl.QueryInterface(ISimpleAudioVolume))
                     except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
                         continue
         except Exception as e:
-            logger.debug(f"Error buscando sesión para {self.target_app_name}: {e}")
-        
-        return None
+            logger.debug(f"Error buscando sesión para {self.app_name}: {e}")
+        return interfaces
 
-    def get_current_volume(self) -> Optional[float]:
-        """
-        Obtiene el volumen máster actual (0.0 a 1.0) de la app objetivo.
-        """
-        interface = self._get_target_session_interface()
-        if interface:
-            try:
-                return interface.GetMasterVolume()
-            except Exception as e:
-                logger.debug(f"Error leyendo volumen actual: {e}")
-        return None
-
-    def set_volume(self, target_volume: float, duration_seconds: Optional[float] = None) -> bool:
-        """
-        Establece el volumen de la app objetivo.
-        
-        Si duration_seconds <= 0: Se aplica el cambio de volumen de forma INSTANTÁNEA (de golpe).
-        Si duration_seconds > 0: Se realiza una transición SUAVE (fade in / fade out) durante ese tiempo.
-        """
+    def set_volume(self, target_volume: float, duration_seconds: float = 0.4) -> bool:
         target_volume = max(0.0, min(1.0, float(target_volume)))
-        duration = duration_seconds if duration_seconds is not None else self.transition_duration
-
-        interface = self._get_target_session_interface()
-        if not interface:
-            logger.debug(f"Proceso '{self.target_app_name}' no encontrado o no tiene sesión de audio activa.")
-            self.last_applied_volume = None
+        interfaces = self._get_interfaces()
+        if not interfaces:
             return False
 
         try:
-            current_vol = interface.GetMasterVolume()
-            
-            # Evitar re-aplicar si el volumen ya es prácticamente idéntico
+            if duration_seconds <= 0:
+                for iface in interfaces:
+                    iface.SetMasterVolume(target_volume, None)
+                return True
+
+            current_vol = interfaces[0].GetMasterVolume()
             if abs(current_vol - target_volume) < 0.005:
-                self.last_applied_volume = target_volume
                 return True
 
-            # Caso 1: Transición INSTANTÁNEA (de repente) cuando duration <= 0
-            if duration <= 0:
-                interface.SetMasterVolume(target_volume, None)
-                self.last_applied_volume = target_volume
-                logger.info(f"Volumen de {self.target_app_name} cambiado instantáneamente a {target_volume * 100:.0f}%")
-                return True
-
-            # Caso 2: Transición SUAVE (fading) cuando duration > 0
-            steps = max(4, int(duration / 0.02))  # Pasos cada ~20ms
-            step_time = duration / steps
+            steps = max(4, int(duration_seconds / 0.02))
+            step_time = duration_seconds / steps
             vol_diff = target_volume - current_vol
             step_size = vol_diff / steps
 
-            logger.info(f"Iniciando transición suave de {self.target_app_name}: {current_vol * 100:.0f}% ➔ {target_volume * 100:.0f}% ({duration}s)")
-            
             for i in range(1, steps + 1):
-                new_vol = current_vol + (step_size * i)
-                new_vol = max(0.0, min(1.0, new_vol))
-                try:
-                    interface.SetMasterVolume(new_vol, None)
-                except Exception:
-                    break
+                new_vol = max(0.0, min(1.0, current_vol + (step_size * i)))
+                for iface in interfaces:
+                    try:
+                        iface.SetMasterVolume(new_vol, None)
+                    except Exception:
+                        pass
                 time.sleep(step_time)
 
-            # Asegurar el valor exacto al final
-            interface.SetMasterVolume(target_volume, None)
-            self.last_applied_volume = target_volume
+            for iface in interfaces:
+                iface.SetMasterVolume(target_volume, None)
             return True
-
         except Exception as e:
-            logger.warning(f"Error al cambiar volumen de {self.target_app_name}: {e}")
+            logger.debug(f"Error ajustando volumen de {self.app_name}: {e}")
             return False
+
+
+class MultiVolumeController:
+    """
+    Controla el volumen de MÚLTIPLES aplicaciones objetivo de forma simultánea.
+    """
+
+    def __init__(self, transition_duration_seconds: float = 0.4):
+        self.transition_duration = transition_duration_seconds
+
+    def apply_volume_state(
+        self,
+        target_apps_config: Dict[str, Dict[str, Any]],
+        is_ducked: bool,
+        trigger_lowest_ratio: float = 1.0,
+        duration_seconds: Optional[float] = None
+    ):
+        """
+        Ajusta de forma simultánea todas las aplicaciones objetivo habilitadas (enabled=True).
+        """
+        duration = duration_seconds if duration_seconds is not None else self.transition_duration
+
+        for app_name, app_info in target_apps_config.items():
+            if not isinstance(app_info, dict):
+                continue
+            
+            # Verificar si esta app objetivo está habilitada (ON)
+            if not app_info.get("enabled", True):
+                continue
+
+            app_control = SingleAppVolumeControl(app_name)
+            
+            if is_ducked:
+                # Usar el volumen de atenuación de la app o el menor exigido
+                app_duck_vol = float(app_info.get("duck_volume", 0.20))
+                target_vol = min(app_duck_vol, trigger_lowest_ratio)
+            else:
+                # Restaurar a su volumen por defecto
+                target_vol = float(app_info.get("default_volume", 1.0))
+
+            app_control.set_volume(target_vol, duration_seconds=duration)
