@@ -23,11 +23,9 @@ def load_config(config_path: str) -> Dict[str, Any]:
     default_config = {
         "version": "2.01",
         "target_apps": {
-            "spotify.exe": {
-                "enabled": True,
-                "default_volume": 1.0,
-                "duck_volume": 0.20
-            }
+            "spotify.exe": {"enabled": True},
+            "applemusic.exe": {"enabled": True},
+            "vlc.exe": {"enabled": False}
         },
         "trigger_apps": {
             "discord.exe": {"enabled": True, "duck_volume": 0.25},
@@ -42,7 +40,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
         "duck_on_microphone": False,
         "selected_microphone": "Default",
         "mic_duck_volume": 0.20,
-        "mic_peak_threshold": 0.01,
+        "mic_peak_threshold": 0.05,
         "transition_duration_seconds": 0.4,
         "release_delay_seconds": 1.0,
         "audio_peak_threshold": 0.005,
@@ -62,16 +60,9 @@ def load_config(config_path: str) -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
             
-            # Migración retrocompatible target_app -> target_apps
             if "target_app" in config and "target_apps" not in config:
                 target_single = str(config["target_app"]).lower()
-                config["target_apps"] = {
-                    target_single: {
-                        "enabled": True,
-                        "default_volume": float(config.get("default_volume", 1.0)),
-                        "duck_volume": float(config.get("default_duck_volume", 0.20))
-                    }
-                }
+                config["target_apps"] = {target_single: {"enabled": True}}
 
             if "trigger_apps" in config and isinstance(config["trigger_apps"], dict):
                 clean_triggers = {}
@@ -92,10 +83,6 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 
 class AudioDuckerEngine:
-    """
-    Motor v2.01 de monitoreo y atenuación simultánea de múltiples aplicaciones objetivo.
-    """
-
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.lock = threading.Lock()
@@ -141,7 +128,7 @@ class AudioDuckerEngine:
                 duck_on_mic = bool(self.config.get("duck_on_microphone", False))
                 selected_mic = str(self.config.get("selected_microphone", "Default"))
                 mic_duck_vol = float(self.config.get("mic_duck_volume", 0.20))
-                mic_peak_thresh = float(self.config.get("mic_peak_threshold", 0.01))
+                mic_peak_thresh = float(self.config.get("mic_peak_threshold", 0.05))
 
             detector.threshold = peak_threshold
             controller = MultiVolumeController(transition_duration_seconds=transition_duration)
@@ -207,6 +194,13 @@ def main():
     engine = AudioDuckerEngine(config)
     engine.start()
 
+    def restart_service_callback():
+        engine.stop()
+        time.sleep(0.2)
+        new_cfg = load_config(config_file)
+        engine.update_config(new_cfg)
+        engine.start()
+
     if "--cli" in sys.argv or "--no-gui" in sys.argv:
         print("[+] AudioDucker v2.01 ejecutándose en modo consola sin GUI. Presiona Ctrl+C para salir.")
         try:
@@ -217,7 +211,11 @@ def main():
             sys.exit(0)
 
     from gui import launch_gui
-    launch_gui(config_file, on_config_updated_callback=engine.update_config)
+    launch_gui(
+        config_file,
+        on_config_updated_callback=engine.update_config,
+        on_restart_service_callback=restart_service_callback
+    )
     engine.stop()
 
 if __name__ == "__main__":

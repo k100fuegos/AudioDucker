@@ -13,7 +13,9 @@ logger = logging.getLogger("AudioDucker.VolumeController")
 
 class SingleAppVolumeControl:
     def __init__(self, app_name: str):
-        self.app_name = app_name.lower()
+        self.app_name = app_name.lower().strip()
+        self.app_no_ext = self.app_name.replace(".exe", "")
+        self.app_with_exe = f"{self.app_no_ext}.exe"
 
     def _get_interfaces(self) -> List[ISimpleAudioVolume]:
         interfaces = []
@@ -28,8 +30,11 @@ class SingleAppVolumeControl:
             for session in sessions:
                 if session.Process:
                     try:
-                        proc_name = session.Process.name().lower()
-                        if proc_name == self.app_name:
+                        proc_name = session.Process.name().lower().strip()
+                        proc_no_ext = proc_name.replace(".exe", "")
+                        
+                        # Coincidencia flexible de proceso
+                        if proc_name in (self.app_name, self.app_with_exe, self.app_no_ext) or proc_no_ext == self.app_no_ext:
                             interfaces.append(session._ctl.QueryInterface(ISimpleAudioVolume))
                     except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
                         continue
@@ -89,7 +94,6 @@ class SingleAppVolumeControl:
 class MultiVolumeController:
     """
     Controla el volumen de MÚLTIPLES aplicaciones objetivo de forma simultánea.
-    El nivel de volumen de atenuación es determinado por la app activadora activa.
     """
 
     def __init__(self, transition_duration_seconds: float = 0.4):
@@ -115,10 +119,8 @@ class MultiVolumeController:
             app_control = SingleAppVolumeControl(app_name)
             
             if is_ducked:
-                # El porcentaje de bajada lo define la app activadora que generó el evento
                 target_vol = max(0.0, min(1.0, trigger_lowest_ratio))
             else:
-                # Al silenciarse, restaura al 100% (1.0)
                 target_vol = 1.0
 
             app_control.set_volume(target_vol, duration_seconds=duration)

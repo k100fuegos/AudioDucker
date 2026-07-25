@@ -111,27 +111,43 @@ class AudioDetector:
         speaking_triggers = set()
         lowest_volume = 1.0
 
+        # Normalizar diccionario de activadores para búsqueda flexible
+        clean_triggers: Dict[str, Tuple[bool, float]] = {}
+        for app_k, app_v in trigger_apps.items():
+            k_clean = str(app_k).lower().strip()
+            is_enabled = True
+            req_vol = default_duck_vol
+            if isinstance(app_v, dict):
+                is_enabled = bool(app_v.get("enabled", True))
+                req_vol = float(app_v.get("duck_volume", default_duck_vol))
+            else:
+                req_vol = float(app_v)
+            clean_triggers[k_clean] = (is_enabled, req_vol)
+
         for proc_name, peak in active_procs.items():
             if peak >= self.threshold:
-                if proc_name in trigger_apps:
-                    app_info = trigger_apps[proc_name]
-                    is_enabled = True
-                    req_vol = default_duck_vol
+                # Coincidencia flexible: proc_name, sin .exe o con .exe
+                matched_key = None
+                p_clean = proc_name.lower().strip()
+                p_no_ext = p_clean.replace(".exe", "")
+                p_with_exe = f"{p_no_ext}.exe"
 
-                    if isinstance(app_info, dict):
-                        is_enabled = app_info.get("enabled", True)
-                        req_vol = float(app_info.get("duck_volume", default_duck_vol))
-                    else:
-                        req_vol = float(app_info)
+                if p_clean in clean_triggers:
+                    matched_key = p_clean
+                elif p_with_exe in clean_triggers:
+                    matched_key = p_with_exe
+                elif p_no_ext in clean_triggers:
+                    matched_key = p_no_ext
 
+                if matched_key:
+                    is_enabled, req_vol = clean_triggers[matched_key]
                     if is_enabled:
-                        speaking_triggers.add(proc_name)
+                        speaking_triggers.add(matched_key)
                         if req_vol < lowest_volume:
                             lowest_volume = req_vol
 
         if duck_on_microphone:
             mic_peak = self.get_microphone_peak(selected_microphone)
-            # Solo activa atenuación si el pico supera el umbral configurado por el usuario
             if mic_peak >= mic_peak_threshold:
                 speaking_triggers.add(f"🎤 Micrófono ({selected_microphone})")
                 if mic_duck_volume < lowest_volume:

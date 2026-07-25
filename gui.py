@@ -12,6 +12,27 @@ from detector import AudioDetector
 
 logger = logging.getLogger("AudioDucker.GUI")
 
+def resolve_exe_name(filepath: str) -> str:
+    """
+    Resuelve el nombre ejecutable real a partir de un archivo .exe o un acceso directo .lnk.
+    """
+    filepath = filepath.strip()
+    if filepath.lower().endswith(".lnk"):
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortcut(filepath)
+            target = shortcut.TargetPath
+            if target and target.lower().endswith(".exe"):
+                return os.path.basename(target).lower()
+        except Exception:
+            pass
+
+    filename = os.path.basename(filepath).lower()
+    if not filename.endswith(".exe") and not filename.endswith(".lnk"):
+        filename += ".exe"
+    return filename
+
 def disable_slider_mousewheel(slider: ctk.CTkSlider):
     try:
         slider.unbind("<MouseWheel>")
@@ -29,11 +50,12 @@ def disable_slider_mousewheel(slider: ctk.CTkSlider):
 
 
 class AudioDuckerGUI(ctk.CTk):
-    def __init__(self, config_path: str, on_config_updated_callback=None):
+    def __init__(self, config_path: str, on_config_updated_callback=None, on_restart_service_callback=None):
         super().__init__()
 
         self.config_path = config_path
         self.on_config_updated_callback = on_config_updated_callback
+        self.on_restart_service_callback = on_restart_service_callback
         self.detector = AudioDetector()
         self.config_data = self.load_config()
 
@@ -58,7 +80,6 @@ class AudioDuckerGUI(ctk.CTk):
         self.active_tab = "targets"
         self._build_sidebar_layout()
 
-        # Hilo de monitoreo en vivo para la GUI
         self.after(200, self._update_live_meters)
 
     def load_config(self) -> Dict[str, Any]:
@@ -130,21 +151,30 @@ class AudioDuckerGUI(ctk.CTk):
                 pass
         return default_config
 
-    def save_config(self):
+    def save_config(self, show_msg: bool = True):
         try:
             self.config_data["version"] = "2.01"
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=2, ensure_ascii=False)
             if self.on_config_updated_callback:
                 self.on_config_updated_callback(self.config_data)
-            messagebox.showinfo("Éxito", "¡Configuración guardada correctamente!")
+            if show_msg:
+                messagebox.showinfo("Éxito", "¡Configuración guardada correctamente!")
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo guardar la configuración: {e}")
+            if show_msg:
+                messagebox.showerror("Error", f"No se pudo guardar la configuración: {e}")
+
+    def _restart_service(self):
+        self.save_config(show_msg=False)
+        if self.on_restart_service_callback:
+            self.on_restart_service_callback()
+        messagebox.showinfo("Reinicio de Servicio", "¡El servicio de AudioDucker ha sido reiniciado correctamente!")
 
     def _build_sidebar_layout(self):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
+        # BARRA LATERAL DE NAVEGACIÓN
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(5, weight=1)
@@ -197,6 +227,17 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.btn_nav_settings.grid(row=4, column=0, padx=15, pady=6, sticky="ew")
 
+        # Botón Reiniciar Servicio
+        btn_restart = ctk.CTkButton(
+            self.sidebar_frame,
+            text="🔄 Reiniciar Servicio",
+            fg_color="#D81B60",
+            hover_color="#AD1457",
+            font=("Segoe UI", 12, "bold"),
+            command=self._restart_service
+        )
+        btn_restart.grid(row=6, column=0, padx=15, pady=(10, 5), sticky="ew")
+
         btn_save = ctk.CTkButton(
             self.sidebar_frame,
             text="💾 Guardar Cambios",
@@ -205,7 +246,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.save_config
         )
-        btn_save.grid(row=6, column=0, padx=15, pady=(10, 5), sticky="ew")
+        btn_save.grid(row=7, column=0, padx=15, pady=(5, 5), sticky="ew")
 
         btn_startup = ctk.CTkButton(
             self.sidebar_frame,
@@ -215,7 +256,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self._install_startup
         )
-        btn_startup.grid(row=7, column=0, padx=15, pady=(5, 20), sticky="ew")
+        btn_startup.grid(row=8, column=0, padx=15, pady=(5, 20), sticky="ew")
 
         self.main_content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_content_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
@@ -249,9 +290,7 @@ class AudioDuckerGUI(ctk.CTk):
         elif tab_name == "settings":
             self.settings_view.pack(fill="both", expand=True)
 
-    # ----------------------------------------------------
-    # VISTA 1: APPS OBJETIVO (Spotify, Apple Music, VLC, etc.)
-    # ----------------------------------------------------
+    # VISTA 1: APPS OBJETIVO
     def _create_targets_view(self):
         self.targets_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
 
@@ -332,30 +371,30 @@ class AudioDuckerGUI(ctk.CTk):
     def _toggle_target_enabled(self, app_name: str, enabled: bool):
         if app_name in self.config_data["target_apps"]:
             self.config_data["target_apps"][app_name]["enabled"] = enabled
+            self.save_config(show_msg=False)
             self._refresh_targets_list()
 
     def _browse_and_add_target_exe(self):
         filepath = filedialog.askopenfilename(
-            title="Seleccionar Ejecutable de Aplicación Objetivo (ej. spotify.exe, applemusic.exe)",
-            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Accesos directos (*.lnk)", "*.lnk"), ("Todos los archivos", "*.*")]
+            title="Seleccionar Ejecutable o Acceso Directo de Aplicación Objetivo",
+            filetypes=[("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"), ("Todos los archivos", "*.*")]
         )
         if filepath:
-            filename = os.path.basename(filepath).lower()
+            filename = resolve_exe_name(filepath)
             if "target_apps" not in self.config_data:
                 self.config_data["target_apps"] = {}
-            if filename not in self.config_data["target_apps"]:
-                self.config_data["target_apps"][filename] = {"enabled": True}
-                self._refresh_targets_list()
-                messagebox.showinfo("App Objetivo Agregada", f"Se agregó '{filename}' a las aplicaciones objetivo.")
+            self.config_data["target_apps"][filename] = {"enabled": True}
+            self.save_config(show_msg=False)
+            self._refresh_targets_list()
+            messagebox.showinfo("App Objetivo Agregada", f"Se agregó '{filename}' a las aplicaciones objetivo activadas.")
 
     def _delete_target_app(self, app_name: str):
         if app_name in self.config_data["target_apps"]:
             del self.config_data["target_apps"][app_name]
+            self.save_config(show_msg=False)
             self._refresh_targets_list()
 
-    # ----------------------------------------------------
     # VISTA 2: APPS ACTIVADORAS
-    # ----------------------------------------------------
     def _create_triggers_view(self):
         self.triggers_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
 
@@ -456,24 +495,26 @@ class AudioDuckerGUI(ctk.CTk):
             else:
                 vol = float(self.config_data["trigger_apps"][app_name])
                 self.config_data["trigger_apps"][app_name] = {"enabled": enabled, "duck_volume": vol}
+            self.save_config(show_msg=False)
 
     def _browse_and_add_trigger_exe(self):
         filepath = filedialog.askopenfilename(
-            title="Seleccionar Ejecutable de Aplicación Activadora",
-            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Todos los archivos", "*.*")]
+            title="Seleccionar Ejecutable o Acceso Directo de Aplicación Activadora",
+            filetypes=[("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"), ("Todos los archivos", "*.*")]
         )
         if filepath:
-            filename = os.path.basename(filepath).lower()
+            filename = resolve_exe_name(filepath)
             if "trigger_apps" not in self.config_data:
                 self.config_data["trigger_apps"] = {}
-            if filename not in self.config_data["trigger_apps"]:
-                self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30}
-                self._refresh_triggers_list()
-                messagebox.showinfo("App Activadora Agregada", f"Se agregó '{filename}' a las aplicaciones activadoras.")
+            self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30}
+            self.save_config(show_msg=False)
+            self._refresh_triggers_list()
+            messagebox.showinfo("App Activadora Agregada", f"Se agregó '{filename}' a las aplicaciones activadoras.")
 
     def _delete_trigger_app(self, app_name: str):
         if app_name in self.config_data["trigger_apps"]:
             del self.config_data["trigger_apps"][app_name]
+            self.save_config(show_msg=False)
             self._refresh_triggers_list()
 
     def _on_trigger_slider_change(self, app_name: str, val: float, entry_widget: ctk.CTkEntry):
@@ -512,9 +553,7 @@ class AudioDuckerGUI(ctk.CTk):
             else:
                 self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val / 100.0}
 
-    # ----------------------------------------------------
-    # VISTA 3: MICRÓFONO CON MEDIDOR DE AUDIO EN TIEMPO REAL
-    # ----------------------------------------------------
+    # VISTA 3: MICRÓFONO
     def _create_mic_view(self):
         self.mic_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
 
@@ -555,7 +594,6 @@ class AudioDuckerGUI(ctk.CTk):
             self.mic_dropdown.set("Default")
         self.mic_dropdown.pack(side="right", padx=5, fill="x", expand=True)
 
-        # Medidor de pico en tiempo real
         meter_frame = ctk.CTkFrame(mic_card, fg_color="#1E1E1E")
         meter_frame.pack(fill="x", padx=15, pady=10)
 
@@ -573,7 +611,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.mic_status_lbl.pack(anchor="w", padx=10, pady=(0, 5))
 
-        # Sensibilidad / Umbral de activación del micrófono
         thresh_row = ctk.CTkFrame(mic_card, fg_color="transparent")
         thresh_row.pack(fill="x", padx=15, pady=10)
 
@@ -606,7 +643,6 @@ class AudioDuckerGUI(ctk.CTk):
         self.mic_thresh_slider.pack(side="right", fill="x", expand=True, padx=8)
         disable_slider_mousewheel(self.mic_thresh_slider)
 
-        # Duck Volume Row
         mic_vol_row = ctk.CTkFrame(mic_card, fg_color="transparent")
         mic_vol_row.pack(fill="x", padx=15, pady=10)
 
@@ -641,9 +677,11 @@ class AudioDuckerGUI(ctk.CTk):
 
     def _on_mic_switch_toggle(self):
         self.config_data["duck_on_microphone"] = self.mic_switch_var.get()
+        self.save_config(show_msg=False)
 
     def _on_mic_selected(self, choice: str):
         self.config_data["selected_microphone"] = choice
+        self.save_config(show_msg=False)
 
     def _on_mic_vol_slider_change(self, val: float):
         pct = max(0, min(100, int(round(val * 100))))
@@ -701,9 +739,6 @@ class AudioDuckerGUI(ctk.CTk):
         self.mic_thresh_slider.set(val / 100.0)
         self.config_data["mic_peak_threshold"] = val / 100.0
 
-    # ----------------------------------------------------
-    # MONITOREO DE AUDIO EN TIEMPO REAL PARA LA GUI
-    # ----------------------------------------------------
     def _update_live_meters(self):
         if self.active_tab == "mic" and hasattr(self, "mic_progress"):
             try:
@@ -732,9 +767,7 @@ class AudioDuckerGUI(ctk.CTk):
 
         self.after(150, self._update_live_meters)
 
-    # ----------------------------------------------------
     # VISTA 4: CONFIGURACIÓN Y TIEMPOS
-    # ----------------------------------------------------
     def _create_settings_view(self):
         self.settings_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
 
@@ -820,8 +853,8 @@ class AudioDuckerGUI(ctk.CTk):
         else:
             messagebox.showerror("Error", "No se encontró el script create_startup_shortcut.ps1")
 
-def launch_gui(config_path: str, on_config_updated_callback=None):
-    app = AudioDuckerGUI(config_path, on_config_updated_callback)
+def launch_gui(config_path: str, on_config_updated_callback=None, on_restart_service_callback=None):
+    app = AudioDuckerGUI(config_path, on_config_updated_callback, on_restart_service_callback)
     app.mainloop()
 
 if __name__ == "__main__":
