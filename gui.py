@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Set
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -98,6 +98,7 @@ class AudioDuckerGUI(ctk.CTk):
         self.detector = AudioDetector()
         self.config_data = self.load_config()
         self.trigger_live_widgets = {}
+        self.expanded_trigger_cards: Set[str] = set()
 
         # Configuración de ventana
         self.title("AudioDucker v2.01 - Control de Volumen Inteligente")
@@ -600,7 +601,7 @@ class AudioDuckerGUI(ctk.CTk):
 
         ctk.CTkLabel(
             self.triggers_view,
-            text="💡 Configura el nivel de bajada y el umbral mínimo de intensidad para activar la atenuación.",
+            text="💡 Haz clic en '⚙️ Opciones' en cualquier app para desplegar y ajustar sus controles.",
             font=("Segoe UI", 11, "italic"),
             text_color="#B0BEC5"
         ).pack(anchor="w", pady=(0, 10))
@@ -631,9 +632,11 @@ class AudioDuckerGUI(ctk.CTk):
             duck_pct = int(duck_vol * 100)
             thresh_pct = int(trig_thresh * 100)
 
-            # Fila Superior: Switch + Nombre de App + Botón Eliminar
+            # -------------------------------------------------------------
+            # HEADER BAR (Siempre Visible)
+            # -------------------------------------------------------------
             top_row = ctk.CTkFrame(card, fg_color="transparent")
-            top_row.pack(fill="x", padx=10, pady=(8, 4))
+            top_row.pack(fill="x", padx=10, pady=8)
 
             sw_var = ctk.BooleanVar(value=is_enabled)
             sw = ctk.CTkSwitch(
@@ -641,27 +644,58 @@ class AudioDuckerGUI(ctk.CTk):
                 text=f"📱 {app_name}",
                 variable=sw_var,
                 font=("Segoe UI", 13, "bold"),
+                width=170,
                 command=lambda name=app_name, var=sw_var: self._toggle_trigger_enabled(name, var.get())
             )
-            sw.pack(side="left")
+            sw.pack(side="left", padx=(0, 10))
+
+            summary_lbl = ctk.CTkLabel(
+                top_row,
+                text=f"Bajar a: {duck_pct}%  ·  Umbral: {thresh_pct}%",
+                font=("Segoe UI", 11, "italic"),
+                text_color="#90A4AE"
+            )
+            summary_lbl.pack(side="left", padx=10)
 
             btn_del = ctk.CTkButton(
                 top_row,
-                text="❌ Eliminar",
-                width=80,
+                text="❌",
+                width=36,
                 fg_color="#D32F2F",
                 hover_color="#B71C1C",
                 command=lambda name=app_name: self._delete_trigger_app(name)
             )
-            btn_del.pack(side="right")
+            btn_del.pack(side="right", padx=(5, 0))
 
-            # Fila de Medidor en Vivo
-            meter_frame = ctk.CTkFrame(card, fg_color="#1E1E1E")
-            meter_frame.pack(fill="x", padx=10, pady=4)
+            # Contenedor desplegable (Collapsible Body)
+            body_frame = ctk.CTkFrame(card, fg_color="#1A1A1A", corner_radius=6)
+
+            # Botón Desplegable (Acordeón)
+            is_open = app_name in self.expanded_trigger_cards
+            btn_expand = ctk.CTkButton(
+                top_row,
+                text="⚙️ Opciones 🔺" if is_open else "⚙️ Opciones 🔻",
+                width=115,
+                fg_color="#1E88E5" if is_open else "#37474F",
+                hover_color="#1565C0" if is_open else "#455A64",
+                font=("Segoe UI", 11, "bold"),
+                command=lambda name=app_name, body=body_frame, btn=None: self._toggle_trigger_card_expand(name, body, btn)
+            )
+            # Re-vincular para pasar el propio botón
+            btn_expand.configure(command=lambda name=app_name, body=body_frame, btn=btn_expand: self._toggle_trigger_card_expand(name, body, btn))
+            btn_expand.pack(side="right", padx=5)
+
+            # -------------------------------------------------------------
+            # CUERPO DESPLEGABLE (Opciones Configurables)
+            # -------------------------------------------------------------
+
+            # Medidor en Vivo
+            meter_frame = ctk.CTkFrame(body_frame, fg_color="#252525")
+            meter_frame.pack(fill="x", padx=12, pady=(10, 6))
 
             pbar = ctk.CTkProgressBar(meter_frame, height=10)
             pbar.set(0.0)
-            pbar.pack(fill="x", padx=8, pady=(5, 2))
+            pbar.pack(fill="x", padx=8, pady=(6, 2))
 
             status_lbl = ctk.CTkLabel(
                 meter_frame,
@@ -673,8 +707,8 @@ class AudioDuckerGUI(ctk.CTk):
             self.trigger_live_widgets[app_name] = (pbar, status_lbl)
 
             # Fila 1: Nivel de Atenuación (Duck Volume)
-            vol_row = ctk.CTkFrame(card, fg_color="transparent")
-            vol_row.pack(fill="x", padx=10, pady=4)
+            vol_row = ctk.CTkFrame(body_frame, fg_color="transparent")
+            vol_row.pack(fill="x", padx=12, pady=6)
 
             ctk.CTkLabel(vol_row, text="Bajar objetivo a:", font=("Segoe UI", 11)).pack(side="left")
 
@@ -705,8 +739,8 @@ class AudioDuckerGUI(ctk.CTk):
             entry_vol.bind("<Return>", lambda e, name=app_name, ent=entry_vol, s=slider_vol: self._validate_trigger_entry(name, ent, s))
 
             # Fila 2: Umbral Mínimo de Sonido / Sensibilidad (Trigger Threshold)
-            thresh_row = ctk.CTkFrame(card, fg_color="transparent")
-            thresh_row.pack(fill="x", padx=10, pady=(2, 8))
+            thresh_row = ctk.CTkFrame(body_frame, fg_color="transparent")
+            thresh_row.pack(fill="x", padx=12, pady=(2, 10))
 
             ctk.CTkLabel(thresh_row, text="Activar si sonido >", font=("Segoe UI", 11, "bold"), text_color="#FFB74D").pack(side="left")
 
@@ -736,6 +770,24 @@ class AudioDuckerGUI(ctk.CTk):
             entry_thresh.bind("<FocusOut>", lambda e, name=app_name, ent=entry_thresh, s=slider_thresh: self._validate_trigger_thresh_entry(name, ent, s))
             entry_thresh.bind("<Return>", lambda e, name=app_name, ent=entry_thresh, s=slider_thresh: self._validate_trigger_thresh_entry(name, ent, s))
 
+            # Mostrar u ocultar cuerpo según estado guardado
+            if is_open:
+                body_frame.pack(fill="x", padx=8, pady=(0, 8))
+            else:
+                body_frame.pack_forget()
+
+    def _toggle_trigger_card_expand(self, app_name: str, body_frame: ctk.CTkFrame, btn_expand: ctk.CTkButton):
+        if app_name in self.expanded_trigger_cards:
+            self.expanded_trigger_cards.remove(app_name)
+            body_frame.pack_forget()
+            if btn_expand:
+                btn_expand.configure(text="⚙️ Opciones 🔻", fg_color="#37474F")
+        else:
+            self.expanded_trigger_cards.add(app_name)
+            body_frame.pack(fill="x", padx=8, pady=(0, 8))
+            if btn_expand:
+                btn_expand.configure(text="⚙️ Opciones 🔺", fg_color="#1E88E5")
+
     def _toggle_trigger_enabled(self, app_name: str, enabled: bool):
         if app_name in self.config_data["trigger_apps"]:
             if isinstance(self.config_data["trigger_apps"][app_name], dict):
@@ -755,6 +807,7 @@ class AudioDuckerGUI(ctk.CTk):
             if "trigger_apps" not in self.config_data:
                 self.config_data["trigger_apps"] = {}
             self.config_data["trigger_apps"][filename] = {"enabled": True, "duck_volume": 0.30, "trigger_threshold": 0.05}
+            self.expanded_trigger_cards.add(filename)
             self.save_config(show_msg=False)
             self._refresh_triggers_list()
             messagebox.showinfo("App Activadora Agregada", f"Se detectó e identificó '{filename}'. Se agregó a las aplicaciones activadoras.")
@@ -762,6 +815,8 @@ class AudioDuckerGUI(ctk.CTk):
     def _delete_trigger_app(self, app_name: str):
         if app_name in self.config_data["trigger_apps"]:
             del self.config_data["trigger_apps"][app_name]
+            if app_name in self.expanded_trigger_cards:
+                self.expanded_trigger_cards.remove(app_name)
             self.save_config(show_msg=False)
             self._refresh_triggers_list()
 
