@@ -4,6 +4,9 @@
     "spotify.exe": {
       "enabled": true
     },
+    "applemusic.exe": {
+      "enabled": true
+    },
     "vlc.exe": {
       "enabled": false
     }
@@ -45,7 +48,7 @@
   "duck_on_microphone": false,
   "selected_microphone": "Default",
   "mic_duck_volume": 0.20,
-  "mic_peak_threshold": 0.01,
+  "mic_peak_threshold": 0.05,
   "transition_duration_seconds": 0.4,
   "release_delay_seconds": 1.0,
   "audio_peak_threshold": 0.005,

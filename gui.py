@@ -13,9 +13,6 @@ from detector import AudioDetector
 logger = logging.getLogger("AudioDucker.GUI")
 
 def disable_slider_mousewheel(slider: ctk.CTkSlider):
-    """
-    Inhibe al 100% que la rueda del ratón modifique el valor del CTkSlider.
-    """
     try:
         slider.unbind("<MouseWheel>")
         slider.unbind("<Button-4>")
@@ -42,8 +39,8 @@ class AudioDuckerGUI(ctk.CTk):
 
         # Configuración de ventana
         self.title("AudioDucker v2.01 - Control de Volumen Inteligente")
-        self.geometry("920x640")
-        self.minsize(860, 580)
+        self.geometry("920x680")
+        self.minsize(860, 600)
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
@@ -61,11 +58,15 @@ class AudioDuckerGUI(ctk.CTk):
         self.active_tab = "targets"
         self._build_sidebar_layout()
 
+        # Hilo de monitoreo en vivo para la GUI
+        self.after(200, self._update_live_meters)
+
     def load_config(self) -> Dict[str, Any]:
         default_config = {
             "version": "2.01",
             "target_apps": {
                 "spotify.exe": {"enabled": True},
+                "applemusic.exe": {"enabled": True},
                 "vlc.exe": {"enabled": False}
             },
             "trigger_apps": {
@@ -81,7 +82,7 @@ class AudioDuckerGUI(ctk.CTk):
             "duck_on_microphone": False,
             "selected_microphone": "Default",
             "mic_duck_volume": 0.20,
-            "mic_peak_threshold": 0.01,
+            "mic_peak_threshold": 0.05,
             "transition_duration_seconds": 0.4,
             "release_delay_seconds": 1.0,
             "audio_peak_threshold": 0.005,
@@ -94,7 +95,6 @@ class AudioDuckerGUI(ctk.CTk):
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     
-                    # Migración retrocompatible target_app -> target_apps
                     if "target_app" in data and "target_apps" not in data:
                         target_single = str(data["target_app"]).lower()
                         data["target_apps"] = {target_single: {"enabled": True}}
@@ -142,18 +142,13 @@ class AudioDuckerGUI(ctk.CTk):
             messagebox.showerror("Error", f"No se pudo guardar la configuración: {e}")
 
     def _build_sidebar_layout(self):
-        # Grid layout: 1 fila, 2 columnas
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        # ----------------------------------------------------
-        # BARRA LATERAL DE NAVEGACIÓN (Sidebar / Slide Bar)
-        # ----------------------------------------------------
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(5, weight=1)
 
-        # Título del menú
         self.logo_label = ctk.CTkLabel(
             self.sidebar_frame,
             text="🎵 AudioDucker\nVersion 2.01",
@@ -162,7 +157,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 20))
 
-        # Botones de navegación
         self.btn_nav_targets = ctk.CTkButton(
             self.sidebar_frame,
             text="🎯 Apps Objetivo",
@@ -203,7 +197,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.btn_nav_settings.grid(row=4, column=0, padx=15, pady=6, sticky="ew")
 
-        # Botones de acción inferior en Sidebar
         btn_save = ctk.CTkButton(
             self.sidebar_frame,
             text="💾 Guardar Cambios",
@@ -224,37 +217,29 @@ class AudioDuckerGUI(ctk.CTk):
         )
         btn_startup.grid(row=7, column=0, padx=15, pady=(5, 20), sticky="ew")
 
-        # ----------------------------------------------------
-        # CONTENEDOR PRINCIPAL DERECHO
-        # ----------------------------------------------------
         self.main_content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_content_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
 
-        # Crear vistas de cada pestaña
         self._create_targets_view()
         self._create_triggers_view()
         self._create_mic_view()
         self._create_settings_view()
 
-        # Mostrar pestaña por defecto
         self._select_tab("targets")
 
     def _select_tab(self, tab_name: str):
         self.active_tab = tab_name
 
-        # Resetear colores de botones laterales
         self.btn_nav_targets.configure(fg_color=["#3B8ED0", "#1F6AA5"] if tab_name == "targets" else "transparent")
         self.btn_nav_triggers.configure(fg_color=["#3B8ED0", "#1F6AA5"] if tab_name == "triggers" else "transparent")
         self.btn_nav_mic.configure(fg_color=["#3B8ED0", "#1F6AA5"] if tab_name == "mic" else "transparent")
         self.btn_nav_settings.configure(fg_color=["#3B8ED0", "#1F6AA5"] if tab_name == "settings" else "transparent")
 
-        # Ocultar todos los frames
         self.targets_view.pack_forget()
         self.triggers_view.pack_forget()
         self.mic_view.pack_forget()
         self.settings_view.pack_forget()
 
-        # Mostrar el seleccionado
         if tab_name == "targets":
             self.targets_view.pack(fill="both", expand=True)
         elif tab_name == "triggers":
@@ -265,7 +250,7 @@ class AudioDuckerGUI(ctk.CTk):
             self.settings_view.pack(fill="both", expand=True)
 
     # ----------------------------------------------------
-    # VISTA 1: APPS OBJETIVO (Sin porcentajes individuales)
+    # VISTA 1: APPS OBJETIVO (Spotify, Apple Music, VLC, etc.)
     # ----------------------------------------------------
     def _create_targets_view(self):
         self.targets_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
@@ -351,8 +336,8 @@ class AudioDuckerGUI(ctk.CTk):
 
     def _browse_and_add_target_exe(self):
         filepath = filedialog.askopenfilename(
-            title="Seleccionar Ejecutable de Aplicación Objetivo",
-            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Todos los archivos", "*.*")]
+            title="Seleccionar Ejecutable de Aplicación Objetivo (ej. spotify.exe, applemusic.exe)",
+            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Accesos directos (*.lnk)", "*.lnk"), ("Todos los archivos", "*.*")]
         )
         if filepath:
             filename = os.path.basename(filepath).lower()
@@ -369,7 +354,7 @@ class AudioDuckerGUI(ctk.CTk):
             self._refresh_targets_list()
 
     # ----------------------------------------------------
-    # VISTA 2: APPS ACTIVADORAS (Con Sliders desvinculados de MouseWheel e Inputs + / -)
+    # VISTA 2: APPS ACTIVADORAS
     # ----------------------------------------------------
     def _create_triggers_view(self):
         self.triggers_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
@@ -404,7 +389,7 @@ class AudioDuckerGUI(ctk.CTk):
 
         triggers = self.config_data.get("trigger_apps", {})
         if not triggers:
-            ctk.CTkLabel(self.triggers_scroll, text="No hay aplicaciones activadoras configuradas. Agrega una arriba.").pack(pady=20)
+            ctk.CTkLabel(self.triggers_scroll, text="No hay aplicaciones activadoras configuradas.").pack(pady=20)
             return
 
         for app_name, app_info in list(triggers.items()):
@@ -528,7 +513,7 @@ class AudioDuckerGUI(ctk.CTk):
                 self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val / 100.0}
 
     # ----------------------------------------------------
-    # VISTA 3: MICRÓFONO
+    # VISTA 3: MICRÓFONO CON MEDIDOR DE AUDIO EN TIEMPO REAL
     # ----------------------------------------------------
     def _create_mic_view(self):
         self.mic_view = ctk.CTkFrame(self.main_content_frame, fg_color="transparent")
@@ -570,15 +555,67 @@ class AudioDuckerGUI(ctk.CTk):
             self.mic_dropdown.set("Default")
         self.mic_dropdown.pack(side="right", padx=5, fill="x", expand=True)
 
-        mic_vol_row = ctk.CTkFrame(mic_card, fg_color="transparent")
-        mic_vol_row.pack(fill="x", padx=15, pady=15)
+        # Medidor de pico en tiempo real
+        meter_frame = ctk.CTkFrame(mic_card, fg_color="#1E1E1E")
+        meter_frame.pack(fill="x", padx=15, pady=10)
 
-        ctk.CTkLabel(mic_vol_row, text="Nivel de volumen al hablar:").pack(side="left")
+        ctk.CTkLabel(meter_frame, text="🔊 Medidor de voz en vivo:", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(5, 2))
+        
+        self.mic_progress = ctk.CTkProgressBar(meter_frame, height=14)
+        self.mic_progress.set(0.0)
+        self.mic_progress.pack(fill="x", padx=10, pady=5)
+
+        self.mic_status_lbl = ctk.CTkLabel(
+            meter_frame,
+            text="Pico actual: 0% | Estado: Esperando voz...",
+            font=("Segoe UI", 11, "italic"),
+            text_color="#9E9E9E"
+        )
+        self.mic_status_lbl.pack(anchor="w", padx=10, pady=(0, 5))
+
+        # Sensibilidad / Umbral de activación del micrófono
+        thresh_row = ctk.CTkFrame(mic_card, fg_color="transparent")
+        thresh_row.pack(fill="x", padx=15, pady=10)
+
+        ctk.CTkLabel(thresh_row, text="Sensibilidad / Umbral de activación (Ruido de fondo):").pack(side="left")
+
+        init_thresh_pct = int(self.config_data.get("mic_peak_threshold", 0.05) * 100)
+
+        btn_t_sub = ctk.CTkButton(thresh_row, text="-", width=28, command=lambda: self._step_mic_thresh(-1))
+        btn_t_sub.pack(side="left", padx=4)
+
+        self.mic_thresh_entry = ctk.CTkEntry(thresh_row, width=45, justify="center")
+        self.mic_thresh_entry.insert(0, str(init_thresh_pct))
+        self.mic_thresh_entry.pack(side="left", padx=2)
+        self.mic_thresh_entry.bind("<FocusOut>", lambda e: self._on_mic_thresh_validate())
+        self.mic_thresh_entry.bind("<Return>", lambda e: self._on_mic_thresh_validate())
+
+        ctk.CTkLabel(thresh_row, text="%").pack(side="left", padx=1)
+
+        btn_t_add = ctk.CTkButton(thresh_row, text="+", width=28, command=lambda: self._step_mic_thresh(1))
+        btn_t_add.pack(side="left", padx=4)
+
+        self.mic_thresh_slider = ctk.CTkSlider(
+            thresh_row,
+            from_=0.01,
+            to=0.30,
+            number_of_steps=29,
+            command=self._on_mic_thresh_slider_change
+        )
+        self.mic_thresh_slider.set(self.config_data.get("mic_peak_threshold", 0.05))
+        self.mic_thresh_slider.pack(side="right", fill="x", expand=True, padx=8)
+        disable_slider_mousewheel(self.mic_thresh_slider)
+
+        # Duck Volume Row
+        mic_vol_row = ctk.CTkFrame(mic_card, fg_color="transparent")
+        mic_vol_row.pack(fill="x", padx=15, pady=10)
+
+        ctk.CTkLabel(mic_vol_row, text="Nivel de atenuación al hablar por mic:").pack(side="left")
 
         init_mic_pct = int(self.config_data.get("mic_duck_volume", 0.20) * 100)
 
         btn_mic_sub = ctk.CTkButton(mic_vol_row, text="-", width=30, command=lambda: self._step_mic_vol(-5))
-        btn_mic_sub.pack(side="left", padx=5)
+        btn_mic_sub.pack(side="left", padx=4)
 
         self.mic_entry = ctk.CTkEntry(mic_vol_row, width=50, justify="center")
         self.mic_entry.insert(0, str(init_mic_pct))
@@ -589,7 +626,7 @@ class AudioDuckerGUI(ctk.CTk):
         ctk.CTkLabel(mic_vol_row, text="%").pack(side="left", padx=1)
 
         btn_mic_add = ctk.CTkButton(mic_vol_row, text="+", width=30, command=lambda: self._step_mic_vol(5))
-        btn_mic_add.pack(side="left", padx=5)
+        btn_mic_add.pack(side="left", padx=4)
 
         self.mic_vol_slider = ctk.CTkSlider(
             mic_vol_row,
@@ -636,6 +673,65 @@ class AudioDuckerGUI(ctk.CTk):
         self.mic_vol_slider.set(val / 100.0)
         self.config_data["mic_duck_volume"] = val / 100.0
 
+    def _on_mic_thresh_slider_change(self, val: float):
+        pct = max(1, min(30, int(round(val * 100))))
+        self.mic_thresh_entry.delete(0, "end")
+        self.mic_thresh_entry.insert(0, str(pct))
+        self.config_data["mic_peak_threshold"] = pct / 100.0
+
+    def _step_mic_thresh(self, delta: int):
+        try:
+            curr = int(self.mic_thresh_entry.get().strip())
+        except Exception:
+            curr = int(self.config_data.get("mic_peak_threshold", 0.05) * 100)
+        new_val = max(1, min(30, curr + delta))
+        self.mic_thresh_entry.delete(0, "end")
+        self.mic_thresh_entry.insert(0, str(new_val))
+        self.mic_thresh_slider.set(new_val / 100.0)
+        self.config_data["mic_peak_threshold"] = new_val / 100.0
+
+    def _on_mic_thresh_validate(self):
+        try:
+            val = int(self.mic_thresh_entry.get().strip())
+            val = max(1, min(30, val))
+        except Exception:
+            val = int(self.config_data.get("mic_peak_threshold", 0.05) * 100)
+        self.mic_thresh_entry.delete(0, "end")
+        self.mic_thresh_entry.insert(0, str(val))
+        self.mic_thresh_slider.set(val / 100.0)
+        self.config_data["mic_peak_threshold"] = val / 100.0
+
+    # ----------------------------------------------------
+    # MONITOREO DE AUDIO EN TIEMPO REAL PARA LA GUI
+    # ----------------------------------------------------
+    def _update_live_meters(self):
+        if self.active_tab == "mic" and hasattr(self, "mic_progress"):
+            try:
+                selected_mic = self.config_data.get("selected_microphone", "Default")
+                peak = self.detector.get_microphone_peak(selected_mic)
+                thresh = float(self.config_data.get("mic_peak_threshold", 0.05))
+
+                self.mic_progress.set(min(1.0, peak))
+                peak_pct = int(peak * 100)
+                thresh_pct = int(thresh * 100)
+
+                if peak >= thresh:
+                    self.mic_progress.configure(progress_color="#2E7D32")
+                    self.mic_status_lbl.configure(
+                        text=f"Pico actual: {peak_pct}% | 🟢 SUPERANDO UMBRAL DE ACTIVACIÓN ({thresh_pct}%)",
+                        text_color="#81C784"
+                    )
+                else:
+                    self.mic_progress.configure(progress_color="#1E88E5")
+                    self.mic_status_lbl.configure(
+                        text=f"Pico actual: {peak_pct}% | ⚪ Silencio / Ruido de fondo (Umbral: {thresh_pct}%)",
+                        text_color="#9E9E9E"
+                    )
+            except Exception:
+                pass
+
+        self.after(150, self._update_live_meters)
+
     # ----------------------------------------------------
     # VISTA 4: CONFIGURACIÓN Y TIEMPOS
     # ----------------------------------------------------
@@ -652,7 +748,6 @@ class AudioDuckerGUI(ctk.CTk):
         card = ctk.CTkFrame(self.settings_view)
         card.pack(fill="x", pady=10, padx=5)
 
-        # Transición
         trans_subframe = ctk.CTkFrame(card, fg_color="transparent")
         trans_subframe.pack(fill="x", padx=15, pady=(15, 5))
 
@@ -679,7 +774,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.trans_mode_label.pack(anchor="w", padx=15, pady=(0, 15))
 
-        # Release Delay
         delay_subframe = ctk.CTkFrame(card, fg_color="transparent")
         delay_subframe.pack(fill="x", padx=15, pady=(5, 5))
 

@@ -105,7 +105,7 @@ class AudioDetector:
         duck_on_microphone: bool = False,
         selected_microphone: str = "Default",
         mic_duck_volume: float = 0.20,
-        mic_peak_threshold: float = 0.01
+        mic_peak_threshold: float = 0.05
     ) -> Tuple[bool, float, Set[str]]:
         active_procs = self.get_active_audio_processes()
         speaking_triggers = set()
@@ -131,6 +131,7 @@ class AudioDetector:
 
         if duck_on_microphone:
             mic_peak = self.get_microphone_peak(selected_microphone)
+            # Solo activa atenuación si el pico supera el umbral configurado por el usuario
             if mic_peak >= mic_peak_threshold:
                 speaking_triggers.add(f"🎤 Micrófono ({selected_microphone})")
                 if mic_duck_volume < lowest_volume:
