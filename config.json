@@ -2,9 +2,6 @@
   "version": "2.01",
   "target_apps": {
     "spotify.exe": {
-      "enabled": false
-    },
-    "applemusic.exe": {
       "enabled": true
     }
   },

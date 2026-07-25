@@ -2,11 +2,14 @@ import json
 import logging
 import os
 import sys
+import threading
 from typing import Dict, Any
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+import pystray
+from PIL import Image
 
 from detector import AudioDetector
 
@@ -106,17 +109,62 @@ class AudioDuckerGUI(ctk.CTk):
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
             
-        icon_path = os.path.join(base_dir, "assets", "logo.ico")
-        if os.path.exists(icon_path):
+        self.icon_path = os.path.join(base_dir, "assets", "logo.ico")
+        if os.path.exists(self.icon_path):
             try:
-                self.iconbitmap(icon_path)
+                self.iconbitmap(self.icon_path)
             except Exception:
                 pass
 
         self.active_tab = "targets"
         self._build_sidebar_layout()
 
+        # Configuración de bandeja de sistema (System Tray / Iconos Ocultos)
+        self.tray_icon = None
+        self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        self._init_system_tray()
+
         self.after(200, self._update_live_meters)
+
+    def _init_system_tray(self):
+        try:
+            if os.path.exists(self.icon_path):
+                img = Image.open(self.icon_path)
+            else:
+                img = Image.new('RGB', (64, 64), color=(30, 136, 229))
+
+            menu = pystray.Menu(
+                pystray.MenuItem("🎵 Mostrar AudioDucker", lambda icon, item: self.after(0, self.show_window_from_tray), default=True),
+                pystray.MenuItem("🔄 Reiniciar Servicio", lambda icon, item: self.after(0, self._restart_service)),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("❌ Salir Completamente", lambda icon, item: self.after(0, self.quit_app_from_tray))
+            )
+
+            self.tray_icon = pystray.Icon("AudioDucker", img, "AudioDucker v2.01", menu)
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        except Exception as e:
+            logger.debug(f"Error inicializando bandeja de sistema: {e}")
+
+    def hide_to_tray(self):
+        self.withdraw()
+        if self.tray_icon:
+            try:
+                self.tray_icon.notify("AudioDucker continúa ejecutándose en segundo plano (Iconos Ocultos).", "AudioDucker Minimizado")
+            except Exception:
+                pass
+
+    def show_window_from_tray(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def quit_app_from_tray(self):
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+        self.destroy()
 
     def load_config(self) -> Dict[str, Any]:
         default_config = {
@@ -262,7 +310,6 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.btn_nav_settings.grid(row=4, column=0, padx=15, pady=6, sticky="ew")
 
-        # Botón para inspeccionar procesos sonando en vivo
         btn_detect_live = ctk.CTkButton(
             self.sidebar_frame,
             text="🔍 Escanear Sonidos",
@@ -283,6 +330,16 @@ class AudioDuckerGUI(ctk.CTk):
         )
         btn_restart.grid(row=7, column=0, padx=15, pady=4, sticky="ew")
 
+        btn_tray = ctk.CTkButton(
+            self.sidebar_frame,
+            text="📌 Minimizar a Bandeja",
+            fg_color="#455A64",
+            hover_color="#37474F",
+            font=("Segoe UI", 12, "bold"),
+            command=self.hide_to_tray
+        )
+        btn_tray.grid(row=8, column=0, padx=15, pady=4, sticky="ew")
+
         btn_save = ctk.CTkButton(
             self.sidebar_frame,
             text="💾 Guardar Cambios",
@@ -291,7 +348,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.save_config
         )
-        btn_save.grid(row=8, column=0, padx=15, pady=4, sticky="ew")
+        btn_save.grid(row=9, column=0, padx=15, pady=4, sticky="ew")
 
         btn_startup = ctk.CTkButton(
             self.sidebar_frame,
@@ -301,7 +358,7 @@ class AudioDuckerGUI(ctk.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self._install_startup
         )
-        btn_startup.grid(row=9, column=0, padx=15, pady=(4, 20), sticky="ew")
+        btn_startup.grid(row=10, column=0, padx=15, pady=(4, 20), sticky="ew")
 
         self.main_content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_content_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
