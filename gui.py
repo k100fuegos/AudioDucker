@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, Callable
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -12,6 +12,18 @@ from detector import AudioDetector
 
 logger = logging.getLogger("AudioDucker.GUI")
 
+def unbind_mouse_wheel(widget):
+    """
+    Evita que el slider se mueva al desplazarse con la rueda del ratón.
+    """
+    try:
+        widget.bind("<MouseWheel>", lambda e: "break")
+        widget.bind("<Button-4>", lambda e: "break")
+        widget.bind("<Button-5>", lambda e: "break")
+    except Exception:
+        pass
+
+
 class AudioDuckerGUI(ctk.CTk):
     def __init__(self, config_path: str, on_config_updated_callback=None):
         super().__init__()
@@ -19,18 +31,15 @@ class AudioDuckerGUI(ctk.CTk):
         self.config_path = config_path
         self.on_config_updated_callback = on_config_updated_callback
         self.detector = AudioDetector()
-        
-        # Cargar configuración
         self.config_data = self.load_config()
 
         # Configuración de ventana
         self.title("AudioDucker v2.01 - Control de Volumen Inteligente")
-        self.geometry("820x760")
+        self.geometry("860x780")
         self.resizable(True, True)
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
-        # Icono de ventana si existe en assets
         base_dir = os.path.dirname(os.path.abspath(__file__))
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
@@ -80,7 +89,6 @@ class AudioDuckerGUI(ctk.CTk):
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     
-                    # Migración retrocompatible desde v1.0 / v2.0 si target_app era un string único
                     if "target_app" in data and "target_apps" not in data:
                         target_single = str(data["target_app"]).lower()
                         data["target_apps"] = {
@@ -91,7 +99,6 @@ class AudioDuckerGUI(ctk.CTk):
                             }
                         }
                     
-                    # Migración retrocompatible de trigger_apps si eran solo floats
                     if "trigger_apps" in data and isinstance(data["trigger_apps"], dict):
                         new_triggers = {}
                         for app_k, app_v in data["trigger_apps"].items():
@@ -120,12 +127,11 @@ class AudioDuckerGUI(ctk.CTk):
                 json.dump(self.config_data, f, indent=2, ensure_ascii=False)
             if self.on_config_updated_callback:
                 self.on_config_updated_callback(self.config_data)
-            messagebox.showinfo("Éxito", "¡Configuración v2.01 guardada correctamente!")
+            messagebox.showinfo("Éxito", "¡Configuración guardada correctamente!")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo guardar la configuración: {e}")
 
     def _build_ui(self, base_dir: str):
-        # 1. Header Title Bar (sin banner de imagen dentro de la ventana)
         title_frame = ctk.CTkFrame(self, fg_color="transparent")
         title_frame.pack(fill="x", padx=15, pady=(15, 5))
 
@@ -143,7 +149,6 @@ class AudioDuckerGUI(ctk.CTk):
             text_color="#9E9E9E"
         ).pack(side="left", padx=10)
 
-        # 2. Main Scrollable Container
         self.scroll_frame = ctk.CTkScrollableFrame(self, label_text="Panel de Control General")
         self.scroll_frame.pack(padx=15, pady=10, fill="both", expand=True)
 
@@ -166,7 +171,7 @@ class AudioDuckerGUI(ctk.CTk):
         btn_add_target = ctk.CTkButton(
             target_title_frame,
             text="📁 Agregar App Objetivo (.exe)",
-            width=170,
+            width=180,
             fg_color="#2E7D32",
             hover_color="#1B5E20",
             command=self._browse_and_add_target_exe
@@ -178,7 +183,7 @@ class AudioDuckerGUI(ctk.CTk):
         self._refresh_targets_list()
 
         # ----------------------------------------------------
-        # Sección 2: Aplicaciones Activadoras (Las que provocan que baje el volumen)
+        # Sección 2: Aplicaciones Activadoras (Las que provocan la bajada)
         # ----------------------------------------------------
         trigger_frame = ctk.CTkFrame(self.scroll_frame)
         trigger_frame.pack(fill="x", pady=8, padx=5)
@@ -196,7 +201,7 @@ class AudioDuckerGUI(ctk.CTk):
         btn_add_trigger = ctk.CTkButton(
             trigger_title_frame,
             text="📁 Agregar App Activadora (.exe)",
-            width=180,
+            width=190,
             fg_color="#1565C0",
             hover_color="#0D47A1",
             command=self._browse_and_add_trigger_exe
@@ -242,22 +247,38 @@ class AudioDuckerGUI(ctk.CTk):
             self.mic_dropdown.set("Default")
         self.mic_dropdown.pack(side="right", padx=5, fill="x", expand=True)
 
-        mic_vol_subframe = ctk.CTkFrame(mic_frame, fg_color="transparent")
-        mic_vol_subframe.pack(fill="x", padx=10, pady=5)
+        # Mic Vol Subframe con Botones +, - y Entry
+        mic_vol_row = ctk.CTkFrame(mic_frame, fg_color="transparent")
+        mic_vol_row.pack(fill="x", padx=10, pady=5)
 
-        ctk.CTkLabel(mic_vol_subframe, text="Nivel de atenuación al hablar por mic:").pack(side="left", padx=5)
-        self.mic_vol_label = ctk.CTkLabel(mic_vol_subframe, text=f"{int(self.config_data.get('mic_duck_volume', 0.20)*100)}%", font=("Segoe UI", 12, "bold"))
-        self.mic_vol_label.pack(side="right", padx=5)
+        ctk.CTkLabel(mic_vol_row, text="Volumen al hablar por mic:").pack(side="left", padx=5)
+
+        init_mic_pct = int(self.config_data.get("mic_duck_volume", 0.20) * 100)
+
+        btn_mic_sub = ctk.CTkButton(mic_vol_row, text="-", width=30, command=lambda: self._step_mic_vol(-5))
+        btn_mic_sub.pack(side="left", padx=2)
+
+        self.mic_entry = ctk.CTkEntry(mic_vol_row, width=50, justify="center")
+        self.mic_entry.insert(0, str(init_mic_pct))
+        self.mic_entry.pack(side="left", padx=2)
+        self.mic_entry.bind("<FocusOut>", lambda e: self._on_mic_entry_validate())
+        self.mic_entry.bind("<Return>", lambda e: self._on_mic_entry_validate())
+
+        ctk.CTkLabel(mic_vol_row, text="%").pack(side="left", padx=1)
+
+        btn_mic_add = ctk.CTkButton(mic_vol_row, text="+", width=30, command=lambda: self._step_mic_vol(5))
+        btn_mic_add.pack(side="left", padx=2)
 
         self.mic_vol_slider = ctk.CTkSlider(
-            mic_frame,
+            mic_vol_row,
             from_=0.0,
             to=1.0,
-            number_of_steps=20,
+            number_of_steps=100,
             command=self._on_mic_vol_slider_change
         )
         self.mic_vol_slider.set(self.config_data.get("mic_duck_volume", 0.20))
-        self.mic_vol_slider.pack(fill="x", padx=15, pady=(0, 10))
+        self.mic_vol_slider.pack(side="right", fill="x", expand=True, padx=10)
+        unbind_mouse_wheel(self.mic_vol_slider)
 
         # ----------------------------------------------------
         # Sección 4: Parámetros de Transición y Tiempos
@@ -283,6 +304,7 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.trans_slider.set(self.config_data.get("transition_duration_seconds", 0.4))
         self.trans_slider.pack(fill="x", padx=15, pady=(0, 5))
+        unbind_mouse_wheel(self.trans_slider)
 
         self.trans_mode_label = ctk.CTkLabel(
             gen_frame,
@@ -308,6 +330,7 @@ class AudioDuckerGUI(ctk.CTk):
         )
         self.delay_slider.set(self.config_data.get("release_delay_seconds", 1.0))
         self.delay_slider.pack(fill="x", padx=15, pady=(0, 10))
+        unbind_mouse_wheel(self.delay_slider)
 
         # ----------------------------------------------------
         # Barra Inferior de Acciones
@@ -356,9 +379,32 @@ class AudioDuckerGUI(ctk.CTk):
         self.config_data["selected_microphone"] = choice
 
     def _on_mic_vol_slider_change(self, val: float):
-        val = round(val, 2)
-        self.mic_vol_label.configure(text=f"{int(val*100)}%")
-        self.config_data["mic_duck_volume"] = val
+        pct = max(0, min(100, int(round(val * 100))))
+        self.mic_entry.delete(0, "end")
+        self.mic_entry.insert(0, str(pct))
+        self.config_data["mic_duck_volume"] = pct / 100.0
+
+    def _step_mic_vol(self, delta: int):
+        try:
+            curr = int(self.mic_entry.get().strip())
+        except Exception:
+            curr = int(self.config_data.get("mic_duck_volume", 0.20) * 100)
+        new_val = max(0, min(100, curr + delta))
+        self.mic_entry.delete(0, "end")
+        self.mic_entry.insert(0, str(new_val))
+        self.mic_vol_slider.set(new_val / 100.0)
+        self.config_data["mic_duck_volume"] = new_val / 100.0
+
+    def _on_mic_entry_validate(self):
+        try:
+            val = int(self.mic_entry.get().strip())
+            val = max(0, min(100, val))
+        except Exception:
+            val = int(self.config_data.get("mic_duck_volume", 0.20) * 100)
+        self.mic_entry.delete(0, "end")
+        self.mic_entry.insert(0, str(val))
+        self.mic_vol_slider.set(val / 100.0)
+        self.config_data["mic_duck_volume"] = val / 100.0
 
     # --- Métodos para APPS OBJETIVO ---
     def _browse_and_add_target_exe(self):
@@ -407,8 +453,8 @@ class AudioDuckerGUI(ctk.CTk):
             )
             sw.pack(side="left", padx=5)
 
-            vol_label = ctk.CTkLabel(row, text=f"Bajar a: {int(app_info.get('duck_volume', 0.20)*100)}%", width=85)
-            vol_label.pack(side="right", padx=5)
+            # Botones -, Entry, +
+            duck_pct = int(app_info.get("duck_volume", 0.20) * 100)
 
             btn_del = ctk.CTkButton(
                 row,
@@ -420,25 +466,63 @@ class AudioDuckerGUI(ctk.CTk):
             )
             btn_del.pack(side="right", padx=5)
 
+            btn_add = ctk.CTkButton(row, text="+", width=28, command=lambda name=app_name: self._step_target_vol(name, 5))
+            btn_add.pack(side="right", padx=2)
+
+            ctk.CTkLabel(row, text="%").pack(side="right", padx=1)
+
+            entry = ctk.CTkEntry(row, width=45, justify="center")
+            entry.insert(0, str(duck_pct))
+            entry.pack(side="right", padx=2)
+
+            btn_sub = ctk.CTkButton(row, text="-", width=28, command=lambda name=app_name: self._step_target_vol(name, -5))
+            btn_sub.pack(side="right", padx=2)
+
+            ctk.CTkLabel(row, text="Bajar a:").pack(side="right", padx=2)
+
             slider = ctk.CTkSlider(
                 row,
                 from_=0.0,
                 to=1.0,
-                number_of_steps=20,
-                command=lambda val, name=app_name, lbl=vol_label: self._on_target_vol_change(name, val, lbl)
+                number_of_steps=100,
+                command=lambda val, name=app_name, ent=entry: self._on_target_slider_change(name, val, ent)
             )
             slider.set(app_info.get("duck_volume", 0.20))
-            slider.pack(side="right", fill="x", expand=True, padx=10)
+            slider.pack(side="right", fill="x", expand=True, padx=8)
+            unbind_mouse_wheel(slider)
+
+            entry.bind("<FocusOut>", lambda e, name=app_name, ent=entry, s=slider: self._validate_target_entry(name, ent, s))
+            entry.bind("<Return>", lambda e, name=app_name, ent=entry, s=slider: self._validate_target_entry(name, ent, s))
 
     def _toggle_target_enabled(self, app_name: str, enabled: bool):
         if app_name in self.config_data["target_apps"]:
             self.config_data["target_apps"][app_name]["enabled"] = enabled
 
-    def _on_target_vol_change(self, app_name: str, val: float, label_widget: ctk.CTkLabel):
-        val = round(val, 2)
-        label_widget.configure(text=f"Bajar a: {int(val*100)}%")
+    def _on_target_slider_change(self, app_name: str, val: float, entry_widget: ctk.CTkEntry):
+        pct = max(0, min(100, int(round(val * 100))))
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(pct))
         if app_name in self.config_data["target_apps"]:
-            self.config_data["target_apps"][app_name]["duck_volume"] = val
+            self.config_data["target_apps"][app_name]["duck_volume"] = pct / 100.0
+
+    def _step_target_vol(self, app_name: str, delta: int):
+        if app_name in self.config_data["target_apps"]:
+            curr = int(self.config_data["target_apps"][app_name].get("duck_volume", 0.20) * 100)
+            new_val = max(0, min(100, curr + delta))
+            self.config_data["target_apps"][app_name]["duck_volume"] = new_val / 100.0
+            self._refresh_targets_list()
+
+    def _validate_target_entry(self, app_name: str, entry_widget: ctk.CTkEntry, slider_widget: ctk.CTkSlider):
+        try:
+            val = int(entry_widget.get().strip())
+            val = max(0, min(100, val))
+        except Exception:
+            val = 20
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(val))
+        slider_widget.set(val / 100.0)
+        if app_name in self.config_data["target_apps"]:
+            self.config_data["target_apps"][app_name]["duck_volume"] = val / 100.0
 
     # --- Métodos para APPS ACTIVADORAS ---
     def _browse_and_add_trigger_exe(self):
@@ -478,6 +562,7 @@ class AudioDuckerGUI(ctk.CTk):
 
             is_enabled = app_info.get("enabled", True) if isinstance(app_info, dict) else True
             duck_vol = app_info.get("duck_volume", 0.25) if isinstance(app_info, dict) else float(app_info)
+            duck_pct = int(duck_vol * 100)
 
             sw_var = ctk.BooleanVar(value=is_enabled)
             sw = ctk.CTkSwitch(
@@ -489,9 +574,6 @@ class AudioDuckerGUI(ctk.CTk):
             )
             sw.pack(side="left", padx=5)
 
-            vol_label = ctk.CTkLabel(row, text=f"Fuerza: {int(duck_vol*100)}%", width=80)
-            vol_label.pack(side="right", padx=5)
-
             btn_del = ctk.CTkButton(
                 row,
                 text="❌",
@@ -502,15 +584,33 @@ class AudioDuckerGUI(ctk.CTk):
             )
             btn_del.pack(side="right", padx=5)
 
+            btn_add = ctk.CTkButton(row, text="+", width=28, command=lambda name=app_name: self._step_trigger_vol(name, 5))
+            btn_add.pack(side="right", padx=2)
+
+            ctk.CTkLabel(row, text="%").pack(side="right", padx=1)
+
+            entry = ctk.CTkEntry(row, width=45, justify="center")
+            entry.insert(0, str(duck_pct))
+            entry.pack(side="right", padx=2)
+
+            btn_sub = ctk.CTkButton(row, text="-", width=28, command=lambda name=app_name: self._step_trigger_vol(name, -5))
+            btn_sub.pack(side="right", padx=2)
+
+            ctk.CTkLabel(row, text="Fuerza:").pack(side="right", padx=2)
+
             slider = ctk.CTkSlider(
                 row,
                 from_=0.0,
                 to=1.0,
-                number_of_steps=20,
-                command=lambda val, name=app_name, lbl=vol_label: self._on_trigger_vol_change(name, val, lbl)
+                number_of_steps=100,
+                command=lambda val, name=app_name, ent=entry: self._on_trigger_slider_change(name, val, ent)
             )
             slider.set(duck_vol)
-            slider.pack(side="right", fill="x", expand=True, padx=10)
+            slider.pack(side="right", fill="x", expand=True, padx=8)
+            unbind_mouse_wheel(slider)
+
+            entry.bind("<FocusOut>", lambda e, name=app_name, ent=entry, s=slider: self._validate_trigger_entry(name, ent, s))
+            entry.bind("<Return>", lambda e, name=app_name, ent=entry, s=slider: self._validate_trigger_entry(name, ent, s))
 
     def _toggle_trigger_enabled(self, app_name: str, enabled: bool):
         if app_name in self.config_data["trigger_apps"]:
@@ -520,14 +620,41 @@ class AudioDuckerGUI(ctk.CTk):
                 vol = float(self.config_data["trigger_apps"][app_name])
                 self.config_data["trigger_apps"][app_name] = {"enabled": enabled, "duck_volume": vol}
 
-    def _on_trigger_vol_change(self, app_name: str, val: float, label_widget: ctk.CTkLabel):
-        val = round(val, 2)
-        label_widget.configure(text=f"Fuerza: {int(val*100)}%")
+    def _on_trigger_slider_change(self, app_name: str, val: float, entry_widget: ctk.CTkEntry):
+        pct = max(0, min(100, int(round(val * 100))))
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(pct))
         if app_name in self.config_data["trigger_apps"]:
             if isinstance(self.config_data["trigger_apps"][app_name], dict):
-                self.config_data["trigger_apps"][app_name]["duck_volume"] = val
+                self.config_data["trigger_apps"][app_name]["duck_volume"] = pct / 100.0
             else:
-                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val}
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": pct / 100.0}
+
+    def _step_trigger_vol(self, app_name: str, delta: int):
+        if app_name in self.config_data["trigger_apps"]:
+            app_info = self.config_data["trigger_apps"][app_name]
+            curr = int((app_info.get("duck_volume", 0.25) if isinstance(app_info, dict) else float(app_info)) * 100)
+            new_val = max(0, min(100, curr + delta))
+            if isinstance(app_info, dict):
+                self.config_data["trigger_apps"][app_name]["duck_volume"] = new_val / 100.0
+            else:
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": new_val / 100.0}
+            self._refresh_triggers_list()
+
+    def _validate_trigger_entry(self, app_name: str, entry_widget: ctk.CTkEntry, slider_widget: ctk.CTkSlider):
+        try:
+            val = int(entry_widget.get().strip())
+            val = max(0, min(100, val))
+        except Exception:
+            val = 25
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, str(val))
+        slider_widget.set(val / 100.0)
+        if app_name in self.config_data["trigger_apps"]:
+            if isinstance(self.config_data["trigger_apps"][app_name], dict):
+                self.config_data["trigger_apps"][app_name]["duck_volume"] = val / 100.0
+            else:
+                self.config_data["trigger_apps"][app_name] = {"enabled": True, "duck_volume": val / 100.0}
 
     def _save_all(self):
         self.save_config()

@@ -4,14 +4,28 @@ from typing import Dict, Any, Optional, List
 from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
 import psutil
 
+try:
+    import pythoncom
+except ImportError:
+    pythoncom = None
+
 logger = logging.getLogger("AudioDucker.VolumeController")
 
 class SingleAppVolumeControl:
     def __init__(self, app_name: str):
         self.app_name = app_name.lower()
 
-    def _get_interfaces() -> List[ISimpleAudioVolume]:
+    def _get_interfaces(self) -> List[ISimpleAudioVolume]:
+        """
+        Obtiene de forma segura todas las interfaces de volumen WASAPI activas para esta app.
+        """
         interfaces = []
+        if pythoncom:
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+
         try:
             sessions = AudioUtilities.GetAllSessions()
             for session in sessions:
@@ -27,18 +41,30 @@ class SingleAppVolumeControl:
         return interfaces
 
     def set_volume(self, target_volume: float, duration_seconds: float = 0.4) -> bool:
+        """
+        Establece el volumen máster para todas las instancias activas del proceso.
+        """
         target_volume = max(0.0, min(1.0, float(target_volume)))
         interfaces = self._get_interfaces()
         if not interfaces:
             return False
 
         try:
+            # Caso 1: Cambio instantáneo (duration <= 0)
             if duration_seconds <= 0:
                 for iface in interfaces:
-                    iface.SetMasterVolume(target_volume, None)
+                    try:
+                        iface.SetMasterVolume(target_volume, None)
+                    except Exception:
+                        pass
                 return True
 
-            current_vol = interfaces[0].GetMasterVolume()
+            # Caso 2: Transición suave (duration > 0)
+            try:
+                current_vol = interfaces[0].GetMasterVolume()
+            except Exception:
+                current_vol = 1.0
+
             if abs(current_vol - target_volume) < 0.005:
                 return True
 
@@ -57,10 +83,14 @@ class SingleAppVolumeControl:
                 time.sleep(step_time)
 
             for iface in interfaces:
-                iface.SetMasterVolume(target_volume, None)
+                try:
+                    iface.SetMasterVolume(target_volume, None)
+                except Exception:
+                    pass
             return True
+
         except Exception as e:
-            logger.debug(f"Error ajustando volumen de {self.app_name}: {e}")
+            logger.debug(f"Excepción en set_volume para {self.app_name}: {e}")
             return False
 
 
@@ -95,11 +125,9 @@ class MultiVolumeController:
             app_control = SingleAppVolumeControl(app_name)
             
             if is_ducked:
-                # Usar el volumen de atenuación de la app o el menor exigido
                 app_duck_vol = float(app_info.get("duck_volume", 0.20))
                 target_vol = min(app_duck_vol, trigger_lowest_ratio)
             else:
-                # Restaurar a su volumen por defecto
                 target_vol = float(app_info.get("default_volume", 1.0))
 
             app_control.set_volume(target_vol, duration_seconds=duration)

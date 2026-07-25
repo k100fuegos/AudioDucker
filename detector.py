@@ -5,6 +5,11 @@ import comtypes
 from comtypes import CLSCTX_ALL
 import psutil
 
+try:
+    import pythoncom
+except ImportError:
+    pythoncom = None
+
 logger = logging.getLogger("AudioDucker.Detector")
 
 class AudioDetector:
@@ -16,7 +21,15 @@ class AudioDetector:
     def __init__(self, audio_peak_threshold: float = 0.005):
         self.threshold = audio_peak_threshold
 
+    def _ensure_com(self):
+        if pythoncom:
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+
     def get_active_audio_processes(self) -> Dict[str, float]:
+        self._ensure_com()
         active_processes: Dict[str, float] = {}
 
         try:
@@ -54,6 +67,7 @@ class AudioDetector:
         return active_processes
 
     def get_available_microphones(self) -> List[str]:
+        self._ensure_com()
         mics = ["Default"]
         try:
             devices = AudioUtilities.GetAllDevices()
@@ -67,6 +81,7 @@ class AudioDetector:
         return mics
 
     def get_microphone_peak(self, mic_name: str = "Default") -> float:
+        self._ensure_com()
         try:
             if mic_name == "Default" or not mic_name:
                 mic_dev = AudioUtilities.GetMicrophone()
@@ -92,14 +107,10 @@ class AudioDetector:
         mic_duck_volume: float = 0.20,
         mic_peak_threshold: float = 0.01
     ) -> Tuple[bool, float, Set[str]]:
-        """
-        Analiza si alguna aplicación activadora HABILITADA (enabled=True) o el micrófono están reproduciendo sonido.
-        """
         active_procs = self.get_active_audio_processes()
         speaking_triggers = set()
         lowest_volume = 1.0
 
-        # 1. Escanear aplicaciones activas
         for proc_name, peak in active_procs.items():
             if peak >= self.threshold:
                 if proc_name in trigger_apps:
@@ -113,13 +124,11 @@ class AudioDetector:
                     else:
                         req_vol = float(app_info)
 
-                    # Si el switch de esta app activadora está ON
                     if is_enabled:
                         speaking_triggers.add(proc_name)
                         if req_vol < lowest_volume:
                             lowest_volume = req_vol
 
-        # 2. Escanear micrófono (si el switch ON/OFF de micrófono está activo)
         if duck_on_microphone:
             mic_peak = self.get_microphone_peak(selected_microphone)
             if mic_peak >= mic_peak_threshold:
