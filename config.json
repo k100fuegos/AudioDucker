@@ -1,0 +1,20 @@
+{
+  "target_app": "spotify.exe",
+  "default_volume": 1.0,
+  "default_duck_volume": 0.20,
+  "trigger_apps": {
+    "discord.exe": 0.25,
+    "chrome.exe": 0.35,
+    "msedge.exe": 0.35,
+    "firefox.exe": 0.35,
+    "brave.exe": 0.35,
+    "telegram.exe": 0.25,
+    "zoom.exe": 0.15,
+    "obs64.exe": 0.30
+  },
+  "transition_duration_seconds": 0.4,
+  "release_delay_seconds": 1.0,
+  "audio_peak_threshold": 0.005,
+  "check_interval_seconds": 0.05,
+  "verbose_logging": true
+}

@@ -1,0 +1,4 @@
+pycaw>=2.0.1
+comtypes>=1.4.0
+psutil>=5.9.0
+pywin32>=306
