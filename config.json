@@ -5,14 +5,14 @@
       "enabled": true
     },
     "chrome.exe": {
-      "enabled": true
+      "enabled": false
     }
   },
   "trigger_apps": {
     "discord.exe": {
       "enabled": true,
-      "duck_volume": 0.3,
-      "trigger_threshold": 0.3
+      "duck_volume": 0.25,
+      "trigger_threshold": 0.8
     },
     "chrome.exe": {
       "enabled": false,
