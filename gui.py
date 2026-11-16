@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 import threading
 from typing import Dict, Any, Set
@@ -9,16 +11,61 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import pystray
-from PIL import Image
+from PIL import Image, ImageTk
 
 from detector import AudioDetector
+from volume_controller import IS_WINDOWS, IS_LINUX
 
 logger = logging.getLogger("AudioDucker.GUI")
 
+
+def _parse_desktop_file_exec(filepath: str) -> str:
+    """Extrae el nombre del binario real desde un archivo .desktop de Linux."""
+    try:
+        exec_line = ""
+        name_line = ""
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("Exec=") and not exec_line:
+                    exec_line = s.split("=", 1)[1].strip()
+                elif s.startswith("Name=") and not name_line:
+                    name_line = s.split("=", 1)[1].strip()
+
+        if exec_line:
+            tokens = shlex.split(exec_line)
+            # Saltar wrappers como env, VAR=val, flatpak run, snap run, etc.
+            i = 0
+            while i < len(tokens):
+                tok = tokens[i]
+                base = os.path.basename(tok)
+                if base == "env" or "=" in tok:
+                    i += 1
+                    continue
+                if base == "flatpak" and i + 1 < len(tokens) and tokens[i + 1] == "run":
+                    # Buscar el ID de app de Flatpak (ej. com.discordapp.Discord -> discord)
+                    for ft_tok in tokens[i + 2:]:
+                        if not ft_tok.startswith("-"):
+                            app_id_last = ft_tok.split(".")[-1].lower()
+                            return app_id_last
+                if not tok.startswith("-") and not tok.startswith("%"):
+                    return base.lower()
+                i += 1
+
+        if name_line:
+            return name_line.lower().replace(" ", "")
+    except Exception as e:
+        logger.debug(f"Error leyendo archivo .desktop '{filepath}': {e}")
+    return os.path.basename(filepath).replace(".desktop", "").lower()
+
+
 def resolve_exe_name(filepath: str) -> str:
     filepath = filepath.strip()
-    
-    if filepath.lower().endswith(".lnk"):
+
+    if filepath.lower().endswith(".desktop"):
+        return _parse_desktop_file_exec(filepath)
+
+    if IS_WINDOWS and filepath.lower().endswith(".lnk"):
         target_name = None
 
         try:
@@ -67,9 +114,9 @@ def resolve_exe_name(filepath: str) -> str:
     filename = filename.replace(" - acceso directo.lnk", ".exe").replace(" - acceso directo", "")
     if filename.endswith(".lnk"):
         filename = filename.replace(".lnk", "")
-    if not filename.endswith(".exe"):
+    if IS_WINDOWS and not filename.endswith(".exe"):
         filename += ".exe"
-    
+
     return filename.replace(" ", "")
 
 def disable_slider_mousewheel(slider: ctk.CTkSlider):
@@ -110,11 +157,25 @@ class AudioDuckerGUI(ctk.CTk):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
-            
+
+        bundle_dir = getattr(sys, '_MEIPASS', base_dir)
         self.icon_path = os.path.join(base_dir, "assets", "logo.ico")
-        if os.path.exists(self.icon_path):
+        if not os.path.exists(self.icon_path):
+            self.icon_path = os.path.join(bundle_dir, "assets", "logo.ico")
+
+        self.png_icon_path = os.path.join(base_dir, "assets", "logo.png")
+        if not os.path.exists(self.png_icon_path):
+            self.png_icon_path = os.path.join(bundle_dir, "assets", "logo.png")
+
+        if IS_WINDOWS and os.path.exists(self.icon_path):
             try:
                 self.iconbitmap(self.icon_path)
+            except Exception:
+                pass
+        if os.path.exists(self.png_icon_path):
+            try:
+                self._window_icon_photo = ImageTk.PhotoImage(Image.open(self.png_icon_path))
+                self.iconphoto(True, self._window_icon_photo)
             except Exception:
                 pass
 
@@ -123,6 +184,7 @@ class AudioDuckerGUI(ctk.CTk):
 
         # Configuración de bandeja de sistema (System Tray / Iconos Ocultos)
         self.tray_icon = None
+        self.tray_available = False
         self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self._init_system_tray()
 
@@ -130,8 +192,11 @@ class AudioDuckerGUI(ctk.CTk):
 
     def _init_system_tray(self):
         try:
-            if os.path.exists(self.icon_path):
-                img = Image.open(self.icon_path)
+            tray_img_path = self.png_icon_path if (IS_LINUX and os.path.exists(self.png_icon_path)) else self.icon_path
+            if os.path.exists(tray_img_path):
+                img = Image.open(tray_img_path)
+            elif os.path.exists(self.png_icon_path):
+                img = Image.open(self.png_icon_path)
             else:
                 img = Image.new('RGB', (64, 64), color=(30, 136, 229))
 
@@ -143,17 +208,29 @@ class AudioDuckerGUI(ctk.CTk):
             )
 
             self.tray_icon = pystray.Icon("AudioDucker", img, "AudioDucker v2.01", menu)
-            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            self.tray_available = True
+            threading.Thread(target=self._run_tray_thread, daemon=True).start()
         except Exception as e:
+            self.tray_available = False
             logger.debug(f"Error inicializando bandeja de sistema: {e}")
 
+    def _run_tray_thread(self):
+        try:
+            if self.tray_icon:
+                self.tray_icon.run()
+        except Exception as e:
+            self.tray_available = False
+            logger.debug(f"Bandeja del sistema no soportada en el entorno actual: {e}")
+
     def hide_to_tray(self):
-        self.withdraw()
-        if self.tray_icon:
+        if self.tray_available and self.tray_icon:
+            self.withdraw()
             try:
-                self.tray_icon.notify("AudioDucker continúa ejecutándose en segundo plano (Iconos Ocultos).", "AudioDucker Minimizado")
+                self.tray_icon.notify("AudioDucker continúa ejecutándose en segundo plano.", "AudioDucker Minimizado")
             except Exception:
                 pass
+        else:
+            self.iconify()
 
     def show_window_from_tray(self):
         self.deiconify()
@@ -354,9 +431,10 @@ class AudioDuckerGUI(ctk.CTk):
         )
         btn_save.grid(row=9, column=0, padx=15, pady=4, sticky="ew")
 
+        startup_label = "🚀 Inicio en Windows" if IS_WINDOWS else ("🚀 Inicio en Linux" if IS_LINUX else "🚀 Inicio Automático")
         btn_startup = ctk.CTkButton(
             self.sidebar_frame,
-            text="🚀 Inicio en Windows",
+            text=startup_label,
             fg_color="#6A1B9A",
             hover_color="#4A148C",
             font=("Segoe UI", 12, "bold"),
@@ -556,9 +634,22 @@ class AudioDuckerGUI(ctk.CTk):
             self._refresh_targets_list()
 
     def _browse_and_add_target_exe(self):
+        if IS_LINUX:
+            init_dir = "/usr/share/applications" if os.path.isdir("/usr/share/applications") else os.path.expanduser("~")
+            filetypes = [
+                ("Lanzadores de Aplicación (.desktop)", "*.desktop"),
+                ("Todos los archivos / Binarios", "*"),
+            ]
+        else:
+            init_dir = None
+            filetypes = [
+                ("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"),
+                ("Todos los archivos", "*.*"),
+            ]
         filepath = filedialog.askopenfilename(
-            title="Seleccionar Ejecutable o Acceso Directo de Aplicación Objetivo",
-            filetypes=[("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"), ("Todos los archivos", "*.*")]
+            title="Seleccionar Aplicación Objetivo",
+            initialdir=init_dir,
+            filetypes=filetypes
         )
         if filepath:
             filename = resolve_exe_name(filepath)
@@ -798,9 +889,22 @@ class AudioDuckerGUI(ctk.CTk):
             self.save_config(show_msg=False)
 
     def _browse_and_add_trigger_exe(self):
+        if IS_LINUX:
+            init_dir = "/usr/share/applications" if os.path.isdir("/usr/share/applications") else os.path.expanduser("~")
+            filetypes = [
+                ("Lanzadores de Aplicación (.desktop)", "*.desktop"),
+                ("Todos los archivos / Binarios", "*"),
+            ]
+        else:
+            init_dir = None
+            filetypes = [
+                ("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"),
+                ("Todos los archivos", "*.*"),
+            ]
         filepath = filedialog.askopenfilename(
-            title="Seleccionar Ejecutable o Acceso Directo de Aplicación Activadora",
-            filetypes=[("Archivos Ejecutables o Accesos directos", "*.exe;*.lnk"), ("Todos los archivos", "*.*")]
+            title="Seleccionar Aplicación Activadora",
+            initialdir=init_dir,
+            filetypes=filetypes
         )
         if filepath:
             filename = resolve_exe_name(filepath)
@@ -1108,13 +1212,7 @@ class AudioDuckerGUI(ctk.CTk):
             try:
                 active_procs = self.detector.get_active_audio_processes()
                 for app_name, (pbar, lbl) in list(self.trigger_live_widgets.items()):
-                    app_clean = app_name.lower().strip()
-                    p_no_ext = app_clean.replace(".exe", "")
-                    peak = 0.0
-                    for proc_k, proc_peak in active_procs.items():
-                        pk_clean = proc_k.lower().strip()
-                        if pk_clean in (app_clean, p_no_ext) or pk_clean.replace(".exe", "") == p_no_ext:
-                            peak = max(peak, proc_peak)
+                    peak = self.detector.get_peak_for_app(app_name, active_procs)
 
                     app_info = self.config_data.get("trigger_apps", {}).get(app_name, {})
                     thresh = float(app_info.get("trigger_threshold", 0.05)) if isinstance(app_info, dict) else 0.05
@@ -1222,6 +1320,99 @@ class AudioDuckerGUI(ctk.CTk):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
+
+        if IS_LINUX:
+            try:
+                if getattr(sys, 'frozen', False):
+                    exec_cmd = f'"{sys.executable}"'
+                else:
+                    candidate_bin = os.path.join(base_dir, "AudioDucker")
+                    dist_bin = os.path.join(base_dir, "dist", "AudioDucker")
+                    if os.path.exists(candidate_bin) and os.access(candidate_bin, os.X_OK):
+                        exec_cmd = f'"{candidate_bin}"'
+                    elif os.path.exists(dist_bin) and os.access(dist_bin, os.X_OK):
+                        exec_cmd = f'"{dist_bin}"'
+                    else:
+                        exec_cmd = f'"{sys.executable}" "{os.path.join(base_dir, "main.py")}"'
+
+                icon_file = self.png_icon_path if os.path.exists(self.png_icon_path) else ""
+                desktop_content = (
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Version=1.0\n"
+                    "Name=AudioDucker\n"
+                    "Comment=Control de volumen automático inteligente para Linux\n"
+                    f"Exec={exec_cmd}\n"
+                    f"Path={base_dir}\n"
+                    f"Icon={icon_file}\n"
+                    "Terminal=false\n"
+                    "Categories=AudioVideo;Audio;Utility;\n"
+                    "X-GNOME-Autostart-enabled=true\n"
+                )
+
+                autostart_dir = os.path.expanduser("~/.config/autostart")
+                os.makedirs(autostart_dir, exist_ok=True)
+                autostart_path = os.path.join(autostart_dir, "audioducker.desktop")
+                with open(autostart_path, "w", encoding="utf-8") as f:
+                    f.write(desktop_content)
+                os.chmod(autostart_path, 0o755)
+
+                apps_dir = os.path.expanduser("~/.local/share/applications")
+                os.makedirs(apps_dir, exist_ok=True)
+                app_menu_path = os.path.join(apps_dir, "audioducker.desktop")
+                with open(app_menu_path, "w", encoding="utf-8") as f:
+                    f.write(desktop_content)
+                os.chmod(app_menu_path, 0o755)
+
+                messagebox.showinfo(
+                    "Inicio en Linux",
+                    f"¡AudioDucker configurado en el inicio automático de Linux y menú de aplicaciones!\n\n"
+                    f"• Autostart: {autostart_path}\n"
+                    f"• Menú de Apps: {app_menu_path}"
+                )
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo configurar el inicio automático en Linux: {e}")
+            return
+
+        if getattr(sys, 'frozen', False):
+            target_exe = sys.executable
+            args = ""
+        else:
+            candidate_exe = os.path.join(base_dir, "AudioDucker.exe")
+            dist_exe = os.path.join(base_dir, "dist", "AudioDucker.exe")
+            if os.path.exists(candidate_exe):
+                target_exe = candidate_exe
+                args = ""
+            elif os.path.exists(dist_exe):
+                target_exe = dist_exe
+                args = ""
+            else:
+                pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                target_exe = pythonw if os.path.exists(pythonw) else sys.executable
+                args = f'"{os.path.join(base_dir, "main.py")}"'
+
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            startup_folder = shell.SpecialFolders("Startup")
+            shortcut_path = os.path.join(startup_folder, "AudioDucker.lnk")
+            shortcut = shell.CreateShortcut(shortcut_path)
+            shortcut.TargetPath = target_exe
+            if args:
+                shortcut.Arguments = args
+            shortcut.WorkingDirectory = base_dir
+            shortcut.Description = "AudioDucker - Control de volumen inteligente en segundo plano"
+            if os.path.exists(self.icon_path):
+                shortcut.IconLocation = self.icon_path
+            shortcut.Save()
+            messagebox.showinfo(
+                "Inicio de Windows",
+                f"¡Acceso directo creado en el Inicio de Windows!\n\nRuta: {shortcut_path}\nDestino: {target_exe}"
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Fallo al crear acceso directo con WScript.Shell: {e}")
+
         ps_script = os.path.join(base_dir, "create_startup_shortcut.ps1")
         if os.path.exists(ps_script):
             try:
@@ -1230,7 +1421,7 @@ class AudioDuckerGUI(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo configurar inicio automático: {e}")
         else:
-            messagebox.showerror("Error", "No se encontró el script create_startup_shortcut.ps1")
+            messagebox.showerror("Error", "No se pudo crear el acceso directo de inicio automático.")
 
 def launch_gui(config_path: str, on_config_updated_callback=None, on_restart_service_callback=None):
     app = AudioDuckerGUI(config_path, on_config_updated_callback, on_restart_service_callback)

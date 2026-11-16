@@ -1,6 +1,14 @@
-pycaw>=2.0.1
-comtypes>=1.4.0
+# Cross-platform dependencies
 psutil>=5.9.0
-pywin32>=306
 customtkinter>=5.2.0
 Pillow>=10.0.0
+pystray>=0.19.5
+
+# Windows audio backend (WASAPI / CoreAudio)
+pycaw>=2.0.1; sys_platform == 'win32'
+comtypes>=1.4.0; sys_platform == 'win32'
+pywin32>=306; sys_platform == 'win32'
+
+# Linux audio backend (PipeWire / PulseAudio)
+pulsectl>=23.5.0; sys_platform == 'linux'
+python-xlib>=0.33; sys_platform == 'linux'

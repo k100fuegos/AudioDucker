@@ -4,7 +4,10 @@
     "spotify.exe": {
       "enabled": true
     },
-    "chrome.exe": {
+    "applemusic.exe": {
+      "enabled": true
+    },
+    "vlc.exe": {
       "enabled": false
     }
   },
@@ -12,20 +15,50 @@
     "discord.exe": {
       "enabled": true,
       "duck_volume": 0.25,
-      "trigger_threshold": 0.8
+      "trigger_threshold": 0.05
     },
     "chrome.exe": {
-      "enabled": false,
+      "enabled": true,
       "duck_volume": 0.35,
+      "trigger_threshold": 0.05
+    },
+    "msedge.exe": {
+      "enabled": true,
+      "duck_volume": 0.35,
+      "trigger_threshold": 0.05
+    },
+    "firefox.exe": {
+      "enabled": true,
+      "duck_volume": 0.35,
+      "trigger_threshold": 0.05
+    },
+    "brave.exe": {
+      "enabled": true,
+      "duck_volume": 0.35,
+      "trigger_threshold": 0.05
+    },
+    "telegram.exe": {
+      "enabled": true,
+      "duck_volume": 0.25,
+      "trigger_threshold": 0.05
+    },
+    "zoom.exe": {
+      "enabled": true,
+      "duck_volume": 0.15,
+      "trigger_threshold": 0.05
+    },
+    "obs64.exe": {
+      "enabled": true,
+      "duck_volume": 0.3,
       "trigger_threshold": 0.05
     }
   },
   "duck_on_microphone": false,
-  "selected_microphone": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
+  "selected_microphone": "Default",
   "mic_duck_volume": 0.2,
-  "mic_peak_threshold": 0.08,
-  "transition_duration_seconds": 0.2,
-  "release_delay_seconds": 0.2,
+  "mic_peak_threshold": 0.05,
+  "transition_duration_seconds": 0.4,
+  "release_delay_seconds": 1.0,
   "audio_peak_threshold": 0.005,
   "check_interval_seconds": 0.05,
   "verbose_logging": true

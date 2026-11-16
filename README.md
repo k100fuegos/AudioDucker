@@ -90,5 +90,5 @@ Para volver a generar el ejecutable `.exe` independiente con icono personalizado
 
 ```bash
 pip install pyinstaller pystray Pillow customtkinter pycaw psutil pywin32
-python -m PyInstaller --noconsole --onefile --icon=assets/logo.ico --name "AudioDucker" main.py
+python -m PyInstaller --noconsole --onefile --icon=assets/logo.ico --add-data "assets;assets" --name "AudioDucker" main.py
 ```
