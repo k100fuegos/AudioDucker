@@ -66,13 +66,22 @@ class AudioDetector:
 
         return active_processes
 
+    def _is_active_capture_device(self, dev) -> bool:
+        if not (dev.id and dev.id.startswith("{0.0.1.")):
+            return False
+        state = getattr(dev, "state", None)
+        if state is None:
+            return True
+        state_val = getattr(state, "value", state)
+        return state_val == 1 or "Active" in str(state)
+
     def get_available_microphones(self) -> List[str]:
         self._ensure_com()
         mics = ["Default"]
         try:
             devices = AudioUtilities.GetAllDevices()
             for dev in devices:
-                if dev.id and dev.id.startswith("{0.0.1."):
+                if self._is_active_capture_device(dev):
                     name = dev.FriendlyName
                     if name and name not in mics:
                         mics.append(name)
@@ -86,14 +95,18 @@ class AudioDetector:
             if mic_name == "Default" or not mic_name:
                 mic_dev = AudioUtilities.GetMicrophone()
                 if mic_dev:
-                    meter = mic_dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
+                    raw_dev = getattr(mic_dev, "_dev", mic_dev)
+                    meter = raw_dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
                     return meter.GetPeakValue()
             else:
                 devices = AudioUtilities.GetAllDevices()
                 for dev in devices:
-                    if dev.id and dev.id.startswith("{0.0.1.") and dev.FriendlyName == mic_name:
-                        meter = dev._dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
-                        return meter.GetPeakValue()
+                    if self._is_active_capture_device(dev) and dev.FriendlyName == mic_name:
+                        try:
+                            meter = dev._dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
+                            return meter.GetPeakValue()
+                        except Exception:
+                            continue
         except Exception as e:
             logger.debug(f"Error leyendo pico del micrófono '{mic_name}': {e}")
         return 0.0

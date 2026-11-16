@@ -110,8 +110,11 @@ class AudioDuckerGUI(ctk.CTk):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
-            
+
+        bundle_dir = getattr(sys, '_MEIPASS', base_dir)
         self.icon_path = os.path.join(base_dir, "assets", "logo.ico")
+        if not os.path.exists(self.icon_path):
+            self.icon_path = os.path.join(bundle_dir, "assets", "logo.ico")
         if os.path.exists(self.icon_path):
             try:
                 self.iconbitmap(self.icon_path)
@@ -1222,6 +1225,44 @@ class AudioDuckerGUI(ctk.CTk):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
+            target_exe = sys.executable
+            args = ""
+        else:
+            candidate_exe = os.path.join(base_dir, "AudioDucker.exe")
+            dist_exe = os.path.join(base_dir, "dist", "AudioDucker.exe")
+            if os.path.exists(candidate_exe):
+                target_exe = candidate_exe
+                args = ""
+            elif os.path.exists(dist_exe):
+                target_exe = dist_exe
+                args = ""
+            else:
+                pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                target_exe = pythonw if os.path.exists(pythonw) else sys.executable
+                args = f'"{os.path.join(base_dir, "main.py")}"'
+
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            startup_folder = shell.SpecialFolders("Startup")
+            shortcut_path = os.path.join(startup_folder, "AudioDucker.lnk")
+            shortcut = shell.CreateShortcut(shortcut_path)
+            shortcut.TargetPath = target_exe
+            if args:
+                shortcut.Arguments = args
+            shortcut.WorkingDirectory = base_dir
+            shortcut.Description = "AudioDucker - Control de volumen inteligente en segundo plano"
+            if os.path.exists(self.icon_path):
+                shortcut.IconLocation = self.icon_path
+            shortcut.Save()
+            messagebox.showinfo(
+                "Inicio de Windows",
+                f"¡Acceso directo creado en el Inicio de Windows!\n\nRuta: {shortcut_path}\nDestino: {target_exe}"
+            )
+            return
+        except Exception as e:
+            logger.debug(f"Fallo al crear acceso directo con WScript.Shell: {e}")
+
         ps_script = os.path.join(base_dir, "create_startup_shortcut.ps1")
         if os.path.exists(ps_script):
             try:
@@ -1230,7 +1271,7 @@ class AudioDuckerGUI(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo configurar inicio automático: {e}")
         else:
-            messagebox.showerror("Error", "No se encontró el script create_startup_shortcut.ps1")
+            messagebox.showerror("Error", "No se pudo crear el acceso directo de inicio automático.")
 
 def launch_gui(config_path: str, on_config_updated_callback=None, on_restart_service_callback=None):
     app = AudioDuckerGUI(config_path, on_config_updated_callback, on_restart_service_callback)
