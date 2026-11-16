@@ -1,0 +1,79 @@
+name: Build Multiplatform (Windows & Linux)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feat/**"
+      - "release/**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux Binary (Ubuntu x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk pulseaudio-utils libpulse0 patchelf
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build Standalone Linux Binary
+        run: |
+          python -m PyInstaller --noconfirm --clean --noconsole --onefile --icon=assets/logo.png --add-data "assets:assets" --name "AudioDucker" main.py
+          chmod +x dist/AudioDucker
+          cd dist
+          tar -czvf AudioDucker-Linux-x86_64.tar.gz AudioDucker ../config.json ../assets ../README.md ../install_linux.sh
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioDucker-Linux-x86_64
+          path: |
+            dist/AudioDucker
+            dist/AudioDucker-Linux-x86_64.tar.gz
+
+  build-windows:
+    name: Build Windows Binary (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build Standalone Windows Executable
+        run: |
+          python -m PyInstaller --noconfirm --clean --noconsole --onefile --icon=assets/logo.ico --add-data "assets;assets" --name "AudioDucker" main.py
+          Compress-Archive -Path dist/AudioDucker.exe, config.json, assets, create_startup_shortcut.ps1, README.md -DestinationPath dist/AudioDucker-Windows-x64.zip -Force
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioDucker-Windows-x64
+          path: |
+            dist/AudioDucker.exe
+            dist/AudioDucker-Windows-x64.zip
